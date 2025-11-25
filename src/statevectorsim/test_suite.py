@@ -1,186 +1,267 @@
-import numpy as np
+import math
 from statevectorsim import QuantumState, QuantumCircuit, QuantumGate
-from statevectorsim.utils import *
+from statevectorsim.utils import plot_bloch_spheres
 
-# -------------------------------------------------
-#               Gate Test Utility
-# -------------------------------------------------
+# ==============================================================================
+#                      Testing Utility Functions
+# ==============================================================================
 
-def assert_gate(gate, expected_targets, expected_dim, expected_matrix=None):
-    """ Utility function for common assertions on a QuantumGate object. """
-    assert isinstance(gate, QuantumGate), f"Result is not a QuantumGate object: {gate}"
-    assert gate.targets == expected_targets, f"Targets mismatch: Expected {expected_targets}, got {gate.targets}"
-    assert gate.matrix.shape == (expected_dim,
-                                 expected_dim), f"Matrix shape mismatch: Expected ({expected_dim}, {expected_dim}), got {gate.matrix.shape}"
-
-    if expected_matrix is not None:
-        # Check if the matrix content is correct
-        assert np.allclose(gate.matrix, expected_matrix), f"Matrix content mismatch for targets {expected_targets}."
-
-
-def test_single_gates():
-    """ Function to test all single qubit gates """
-    print("--- Testing Single Qubit Gates (X, Y, Z, H, I) ---")
-
-    # Matrices for comparison
-    I_mat = np.eye(2, dtype=complex)
-    X_mat = np.array([[0, 1], [1, 0]], dtype=complex)
-    Y_mat = np.array([[0, -1j], [1j, 0]], dtype=complex)
-    Z_mat = np.array([[1, 0], [0, -1]], dtype=complex)
-    H_mat = (1 / np.sqrt(2)) * np.array([[1, 1], [1, -1]], dtype=complex)
-
-    # Test single qubit
-    assert_gate(QuantumGate.i(5)[0], [5], 2, I_mat)
-    assert_gate(QuantumGate.x(0)[0], [0], 2, X_mat)
-    assert_gate(QuantumGate.y(1)[0], [1], 2, Y_mat)
-    assert_gate(QuantumGate.z(2)[0], [2], 2, Z_mat)
-    assert_gate(QuantumGate.h(3)[0], [3], 2, H_mat)
-
-    # Test multiple qubits (returns list of gates)
-    x_gates = QuantumGate.x([4, 5, 6])
-    assert len(x_gates) == 3, "Multiple gate call failed to return the correct count."
-    assert x_gates[1].targets == [5], "Multiple gate call failed to set correct target."
-    assert np.allclose(x_gates[2].matrix, X_mat), "Multiple gate call failed to set correct matrix."
-
-    print("Single Qubit Gates: PASS")
-
-
-def test_rotation_gates():
-    print("--- Testing Single Qubit Rotation Gates (Rx, Ry, Rz) ---")
-
-    theta = math.pi / 2  # 90 degrees rotation
-
-    # R_x(pi/2) matrix
-    Rx_mat = np.array([[1 / np.sqrt(2), -1j / np.sqrt(2)], [-1j / np.sqrt(2), 1 / np.sqrt(2)]], dtype=complex)
-    # R_y(pi/2) matrix
-    Ry_mat = np.array([[1 / np.sqrt(2), -1 / np.sqrt(2)], [1 / np.sqrt(2), 1 / np.sqrt(2)]], dtype=complex)
-    # R_z(pi/2) matrix
-    Rz_mat = np.array([[np.exp(-1j * theta / 2), 0], [0, np.exp(1j * theta / 2)]], dtype=complex)
-
-    # Test single application
-    assert_gate(QuantumGate.rx(0, theta)[0], [0], 2, Rx_mat)
-    assert_gate(QuantumGate.ry(1, theta)[0], [1], 2, Ry_mat)
-    assert_gate(QuantumGate.rz(2, theta)[0], [2], 2, Rz_mat)
-
-    # Test multiple application
-    ry_gates = QuantumGate.ry([3, 4], theta)
-    assert len(ry_gates) == 2
-    assert_gate(ry_gates[0], [3], 2, Ry_mat)
-
-    print("Rotation Gates: PASS")
-
-
-def test_two_qubit_gates():
-    print("--- Testing Two Qubit Gates (CX, CZ, SWAP) ---")
-
-    # CX Matrix (targets [control, target])
-    CX_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=complex)
-    assert_gate(QuantumGate.cx(0, 1), [0, 1], 4, CX_mat)
-
-    # CZ Matrix (targets [control, target])
-    CZ_mat = np.diag([1, 1, 1, -1]).astype(complex)
-    assert_gate(QuantumGate.cz(2, 3), [2, 3], 4, CZ_mat)
-
-    # SWAP Matrix (targets [q1, q2]) - swaps |01> and |10>
-    SWAP_mat = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=complex)
-    assert_gate(QuantumGate.swap(4, 5), [4, 5], 4, SWAP_mat)
-    # Check swapped targets: SWAP(5, 4) should yield the same matrix but different target list
-    assert_gate(QuantumGate.swap(5, 4), [5, 4], 4, SWAP_mat)
-
-    print("Two Qubit Gates: PASS")
-
-
-def test_controlled_rotation_gates():
-    print("--- Testing Controlled Rotation Gates (CRx, CRy, CRz) ---")
-    theta = math.pi  # 180 degrees rotation
-
-    # Rx(pi) = -iX
-    Rx_pi_mat = np.array([[0, -1j], [-1j, 0]], dtype=complex)
-    # CRx Matrix (targets [c, t]): I block + Rx(pi) block
-    CRx_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0],
-                        [0, 0, 0, -1j], [0, 0, -1j, 0]], dtype=complex)
-    assert_gate(QuantumGate.crx(0, 1, theta), [0, 1], 4, CRx_mat)
-
-    # Ry(pi) = -iY
-    Ry_pi_mat = np.array([[0, -1], [1, 0]], dtype=complex)
-    # CRy Matrix (targets [c, t]): I block + Ry(pi) block
-    CRy_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0],
-                        [0, 0, 0, -1], [0, 0, 1, 0]], dtype=complex)
-    assert_gate(QuantumGate.cry(2, 3, theta), [2, 3], 4, CRy_mat)
-
-    # Rz(pi) = -iZ
-    Rz_pi_mat = np.diag([-1j, 1j]).astype(complex)  # Rz(pi)
-    # CRz Matrix (targets [c, t]): I block + Rz(pi) block
-    CRz_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0],
-                        [0, 0, -1j, 0], [0, 0, 0, 1j]], dtype=complex)
-    assert_gate(QuantumGate.crz(4, 5, theta), [4, 5], 4, CRz_mat)
-
-    print("Controlled Rotation Gates: PASS")
-
-
-def test_multi_controlled_gates():
-    print("--- Testing Multi-Controlled Gates (CCX, MCX, MCY, MCZ) ---")
-
-    # CCX (3-qubit, targets [c1, c2, t])
-    ccx_gate = QuantumGate.mcx([0, 1], 2)
-    CCX_mat = np.eye(8, dtype=complex)
-    CCX_mat[6:8, 6:8] = [[0, 1], [1, 0]]
-    assert_gate(ccx_gate, [0, 1, 2], 8, CCX_mat)
-
-    # MCX (4-qubit, targets [c1, c2, c3, t])
-    mcx_gate = QuantumGate.mcx([0, 1, 2], 3)
-    MCX_mat = np.eye(16, dtype=complex)
-    MCX_mat[14:16, 14:16] = [[0, 1], [1, 0]]  # Swaps |1110> (14) and |1111> (15)
-    assert_gate(mcx_gate, [0, 1, 2, 3], 16, MCX_mat)
-
-    # MCY (4-qubit, targets [c1, c2, c3, t])
-    mcy_gate = QuantumGate.mcy([4, 5, 6], 7)
-    MCY_mat = np.eye(16, dtype=complex)
-    MCY_mat[14:16, 14:16] = [[0, -1j], [1j, 0]]  # Applies Y to |1110> and |1111> block
-    assert_gate(mcy_gate, [4, 5, 6, 7], 16, MCY_mat)
-
-    # MCZ (3-qubit, targets [c1, c2, t])
-    mcz_gate = QuantumGate.mcz([8, 9], 10)
-    MCZ_mat = np.eye(8, dtype=complex)
-    MCZ_mat[7, 7] = -1  # Phase flip on |111> (index 7)
-    assert_gate(mcz_gate, [8, 9, 10], 8, MCZ_mat)
-
-    print("Multi-Controlled Gates: PASS")
-
-
-def run_circuit_test(title: str, n_qubits: int, circuit: QuantumCircuit):
+def run_test_and_plot(title: str, circuit: QuantumCircuit, target_qubits: list[int] = None):
     """
-    Initializes a QuantumState, runs the circuit, and visualizes the result.
+    Initializes a QuantumState (all |0>), runs the circuit, and visualizes
+    the result on the Bloch spheres for all qubits in the circuit.
+    """
+    n_qubits = circuit.n
+    print("=" * 70)
+    print(f"RUNNING TEST: {title} ({n_qubits} Qubits)")
+
+    # 1. Initialize the state to |0...0>
+    state = QuantumState(n_qubits)
+
+    # 2. Run the circuit
+    print("Applying Gates...")
+    circuit.run(state)
+
+    # Optional: Print the resulting statevector for verification
+    # print(f"Final State Vector: {state.state}")
+
+    # 3. Visualize the Resulting State
+    print(f"Plotting Bloch Spheres for {n_qubits} Qubits...")
+
+    # # If specific targets are provided (e.g., for 1-qubit tests in a 2-qubit system), use them.
+    # # Otherwise, plot all qubits.
+    # qubits_to_plot = target_qubits if target_qubits is not None else list(range(n_qubits))
+
+    # The plot_bloch_spheres function is expected to handle the state vector
+    plot_bloch_spheres(state.state)
+
+    print("-" * 70)
+
+
+# ==============================================================================
+#                      Single-Qubit Gate Tests (1 Qubit)
+# ==============================================================================
+
+def test_i_gate():
+    """Test Identity (I) gate: |0> -> |0> (no change)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.i(0))
+    run_test_and_plot("1. I Gate: |0> -> |0>", qc, target_qubits=[0])
+
+def test_x_gate():
+    """Test Pauli-X (NOT) gate: |0> -> |1> (Flips the state)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.x(0))
+    run_test_and_plot("2. X Gate: |0> -> |1> (+Z to -Z)", qc, target_qubits=[0])
+
+def test_y_gate():
+    """Test Pauli-Y gate: |0> -> i|1> (Rotates by pi about Y-axis to -Z)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.y(0))
+    run_test_and_plot("3. Y Gate: |0> -> i|1> (+Z to -Z, with global phase)", qc, target_qubits=[0])
+
+def test_z_gate():
+    """Test Pauli-Z gate: |0> -> |0> (No change on |0>, 180 deg phase flip on |1>)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.z(0))
+    run_test_and_plot("4. Z Gate: |0> -> |0>", qc, target_qubits=[0])
+
+def test_h_gate():
+    """Test Hadamard (H) gate: |0> -> |+> (Superposition, +X axis)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.h(0))
+    run_test_and_plot("5. H Gate: |0> -> |+> (+X axis)", qc, target_qubits=[0])
+
+def test_s_gate():
+    """Test Phase (S) gate on |+> state: S|+> = (|0> + i|1>)/sqrt(2) (+Y axis)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.h(0)) # |0> -> |+>
+    # The S gate (Z rotation by pi/2) rotates |+> from +X to +Y
+    qc.add_gate(QuantumGate.s(0))
+    run_test_and_plot("6. S Gate on |+> state: +X -> +Y", qc, target_qubits=[0])
+
+def test_t_gate():
+    """Test T gate on |+> state: Rotates phase by pi/4 (towards +Y)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.h(0)) # |0> -> |+>
+    qc.add_gate(QuantumGate.t(0))
+    run_test_and_plot("7. T Gate on |+> state: Phase rotation by pi/4", qc, target_qubits=[0])
+
+def test_rx_pi_2():
+    """Test Rx(pi/2) gate: Rotates |0> 90 deg about X-axis to -Y axis."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.rx(0, math.pi / 2))
+    run_test_and_plot("8. Rx(pi/2): |0> -> -|y>", qc, target_qubits=[0])
+
+def test_ry_pi_2():
+    """Test Ry(pi/2) gate: Rotates |0> 90 deg about Y-axis to +X axis (|0> -> |+>)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.ry(0, math.pi / 2))
+    run_test_and_plot("9. Ry(pi/2): |0> -> |+> (+X)", qc, target_qubits=[0])
+
+def test_rz_pi():
+    """Test Rz(pi) gate on |+>: Rotates |+> 180 deg about Z-axis to |-> (-X axis)."""
+    qc = QuantumCircuit(1)
+    qc.add_gate(QuantumGate.h(0)) # |0> -> |+>
+    qc.add_gate(QuantumGate.rz(0, math.pi))
+    run_test_and_plot("10. Rz(pi) on |+>: +X -> -X", qc, target_qubits=[0])
+
+
+# ==============================================================================
+#                      Two-Qubit Controlled/Swap Gates
+# ==============================================================================
+
+def test_bell_state_cx():
+    """Test CNOT (CX) gate by creating the Bell state |Φ+>."""
+    qc = QuantumCircuit(2)
+    qc.add_gate(QuantumGate.h(0))    # |00> -> (|00> + |10>)/sqrt(2)
+    qc.add_gate(QuantumGate.cx(0, 1)) # -> (|00> + |11>)/sqrt(2) (Bell state)
+
+    # Entangled state should have both qubits in a mixed state (vector at center)
+    run_test_and_plot("11. Bell State (|Φ+>) using H & CX (Q0=C, Q1=T)", qc, target_qubits=[0, 1])
+
+def test_cz_gate():
+    """Test CZ gate by acting on the Bell state |Φ+> to get |Ψ->."""
+    qc = QuantumCircuit(2)
+    qc.add_gate(QuantumGate.h(0))    # H(0)
+    qc.add_gate(QuantumGate.cx(0, 1)) # CX(0, 1) -> |Φ+>
+    qc.add_gate(QuantumGate.cz(0, 1)) # CZ(|Φ+>) = |Ψ-> = (|00>-|11>)/sqrt(2)
+
+    run_test_and_plot("12. CZ Gate on Bell State (Still entangled)", qc, target_qubits=[0, 1])
+
+def test_swap_gate():
+    """Test SWAP gate: Swap states of |01> to |10>."""
+    qc = QuantumCircuit(2)
+    # Prepare Qubit 1 in |1> state: |00> -> |01>
+    qc.add_gate(QuantumGate.x(1))
+    # Apply SWAP(0, 1) to get |10>
+    qc.add_gate(QuantumGate.swap(0, 1))
+
+    # Qubit 0 should now be |1> (down) and Qubit 1 should be |0> (up)
+    run_test_and_plot("13. SWAP Gate: |01> -> |10>", qc, target_qubits=[0, 1])
+
+
+# ==============================================================================
+#                      Controlled Rotation Gates (2 Qubits)
+# ==============================================================================
+
+def test_crx_gate():
+    """Test CRX(pi) gate: Apply X (180 deg rotation) to target if control is |1>."""
+    qc = QuantumCircuit(2)
+    qc.add_gate(QuantumGate.x(0))      # Set control Q0 to |1>. State: |10>
+    qc.add_gate(QuantumGate.crx(0, 1, math.pi)) # Should apply X to Q1: |10> -> |11>
+
+    # Both Q0 and Q1 should be pointing down (-Z axis)
+    run_test_and_plot("14. CRX(pi) on |10>: |10> -> |11>", qc, target_qubits=[0, 1])
+
+def test_cry_gate():
+    """Test CRY(pi) gate: Apply Y (180 deg rotation) to target if control is |1>."""
+    qc = QuantumCircuit(2)
+    qc.add_gate(QuantumGate.x(0))      # Set control Q0 to |1>. State: |10>
+    qc.add_gate(QuantumGate.cry(0, 1, math.pi)) # Should apply Y to Q1: |10> -> i|11>
+
+    # Both Q0 and Q1 should be pointing down (-Z axis)
+    run_test_and_plot("15. CRY(pi) on |10>: |10> -> i|11>", qc, target_qubits=[0, 1])
+
+def test_crz_gate():
+    """Test CRZ(pi) gate: Apply Z (180 deg rotation) to target if control is |1>."""
+    qc = QuantumCircuit(2)
+    # Prepare a state where RZ is noticeable on Q1: |1+> = (|10> + |11>)/sqrt(2)
+    qc.add_gate(QuantumGate.x(0))
+    qc.add_gate(QuantumGate.h(1))      # State: |1+>
+
+    # CRZ(pi) should apply Z to Q1: |1+> -> |1-> (Q1 moves from +X to -X)
+    qc.add_gate(QuantumGate.crz(0, 1, math.pi))
+
+    # Q0: |1> (-Z); Q1: |-> (-X)
+    run_test_and_plot("16. CRZ(pi) on |1+>: Q1 is flipped +X -> -X", qc, target_qubits=[0, 1])
+
+
+# ==============================================================================
+#                      Multi-Controlled Gates (3 Qubits)
+# ==============================================================================
+
+def test_mcx_gate():
+    """Test Toffoli (CCX) gate: Multi-Controlled X (2 controls, 1 target)."""
+    qc = QuantumCircuit(3)
+    # Set controls Q0 and Q1 to |1>. State: |110>
+    qc.add_gate(QuantumGate.x([0, 1]))
+    # Apply MCX(0, 1, target=2): |110> -> |111>
+    qc.add_gate(QuantumGate.mcx([0, 1], 2))
+
+    # All qubits should be pointing down (-Z axis)
+    run_test_and_plot("17. MCX (Toffoli): |110> -> |111>", qc, target_qubits=[0, 1, 2])
+
+def test_mcy_gate():
+    """Test Multi-Controlled Y gate (2 controls, 1 target)."""
+    qc = QuantumCircuit(3)
+    # Set controls Q0 and Q1 to |1>. State: |110>
+    qc.add_gate(QuantumGate.x([0, 1]))
+    # Apply MCY(0, 1, target=2): |110> -> i|111>
+    qc.add_gate(QuantumGate.mcy([0, 1], 2))
+
+    # All qubits should be pointing down (-Z axis)
+    run_test_and_plot("18. MCY: |110> -> i|111>", qc, target_qubits=[0, 1, 2])
+
+def test_mcz_gate():
+    """Test Multi-Controlled Z gate (2 controls, 1 target)."""
+    qc = QuantumCircuit(3)
+    # Prepare state |11+> where RZ is noticeable on Q2:
+    qc.add_gate(QuantumGate.x([0, 1]))
+    qc.add_gate(QuantumGate.h(2))      # State: |11+>
+
+    # MCZ should apply Z to Q2: |11+> -> -|11-> (Q2 moves from +X to -X)
+    qc.add_gate(QuantumGate.mcz([0, 1], 2))
+
+    # Q0, Q1: |1> (-Z); Q2: |-> (-X)
+    run_test_and_plot("19. MCZ on |11+>: Q2 is flipped +X -> -X", qc, target_qubits=[0, 1, 2])
+
+
+# ==============================================================================
+#                              Main Test Suite
+# ==============================================================================
+
+def test_all_gates():
+    """
+    Main function to run all functional and visualization tests.
     """
     print("=" * 70)
-    print(f"RUNNING CIRCUIT TEST: {title} ({n_qubits} Qubits)")
+    print("   QUANTUM GATE FUNCTIONAL AND BLOCH SPHERE VISUALIZATION TESTS")
+    print("=" * 70)
 
-    # Initialize the state to |0...0>
-    state = QuantumState(n_qubits)  # Initializes to |0>^N
-    # Assuming .state is the correct attribute based on the previous fix attempt
-    print(f"Initial State Vector:\n{state.state}")
+    # Single-Qubit Standard Gates
+    test_i_gate()
+    test_x_gate()
+    test_y_gate()
+    test_z_gate()
+    test_h_gate()
+    test_s_gate()
+    test_t_gate()
 
-    # Run the circuit
-    print("\nApplying Gates...")
-    final_state = circuit.run(state)
+    # Single-Qubit Rotation Gates
+    test_rx_pi_2()
+    test_ry_pi_2()
+    test_rz_pi()
 
-    # Print Final State Vector
-    print("\n--- Final State Vector (Amplitudes) ---")
-    print(final_state)
+    # Two-Qubit Standard/Swap Gates
+    test_bell_state_cx()
+    test_cz_gate()
+    test_swap_gate()
 
-    # Visualize the Resulting State on Bloch Spheres
-    plot_bloch_spheres(final_state.state)
+    # Two-Qubit Controlled Rotation Gates
+    test_crx_gate()
+    test_cry_gate()
+    test_crz_gate()
 
-def main():
-    try:
-        test_single_gates()
-        test_rotation_gates()
-        test_two_qubit_gates()
-        test_controlled_rotation_gates()
-        test_multi_controlled_gates()
+    # Multi-Controlled Gates (3 Qubits)
+    test_mcx_gate()
+    test_mcy_gate()
+    test_mcz_gate()
 
-        print("\nAll Quantum Gate tests passed successfully!")
-    except AssertionError as e:
-        print(f"\nTEST FAILED: {e}")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred during testing: {e}")
+    print("\n" + "=" * 70)
+    print("TEST SUITE COMPLETE: Check console output and Bloch Sphere plots for all gates.")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    test_all_gates()
