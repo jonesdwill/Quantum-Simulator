@@ -136,6 +136,11 @@ class QuantumGate:
         """Helper function to create a 2-qubit gate instance."""
         return QuantumGate(matrix, [control, target], name)
 
+    @staticmethod
+    def _id(n_qubits: int) -> np.ndarray:
+        """Returns the 2^n x 2^n identity matrix."""
+        dim = 2 ** n_qubits
+        return np.identity(dim, dtype=complex)
 
 
     # -------------------------------------
@@ -276,7 +281,46 @@ class QuantumGate:
                            [0, 0, 0, 1]], dtype=complex)
         return QuantumGate._create_controlled_gate(q1, q2, matrix, 'swap')  # Using the 2-qubit helper here
 
+    @staticmethod
+    def cu(control: int, target_qubits: list[int], unitary_matrix: np.ndarray, k: int = 1):
+        """ Creates a Controlled-U^k gate. """
 
+        # num target qubits
+        m_qubits = len(target_qubits)
+
+        if unitary_matrix.shape != (2 ** m_qubits, 2 ** m_qubits):
+            raise ValueError(
+                f"Unitary matrix size must be 2^m x 2^m where m is the number of target qubits ({m_qubits})."
+            )
+
+        # Compute U^k
+        U_k = np.linalg.matrix_power(unitary_matrix, k)
+
+        # Determine the full set of qubits involved
+        all_qubits = sorted(list(set([control] + target_qubits)))
+        n_total = len(all_qubits)
+
+        # Identity matrix for the target register
+        I_target = QuantumGate._id(m_qubits)
+
+        # Construct the Controlled-U matrix (C-U) in the computational basis:
+        # projection operators:
+        P0 = np.array([[1, 0], [0, 0]], dtype=complex)
+        P1 = np.array([[0, 0], [0, 1]], dtype=complex)
+
+        # tensor product P0 I_target
+        P0_I = np.kron(P0, I_target)
+
+        # tensor product P1 U^k
+        P1_U = np.kron(P1, U_k)
+
+        # Full C-U matrix (before permutation/re-indexing)
+        CU_matrix_unpermuted = P0_I + P1_U
+
+        # The indices for the QuantumGate object must be all qubits involved.
+        gate_qubits = [control] + target_qubits
+
+        return QuantumGate(CU_matrix_unpermuted, gate_qubits)
 
     # ----------------------------------------------
     #    Controlled Rotation Gates (CRX, CRY, CRZ)

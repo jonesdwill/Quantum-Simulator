@@ -239,7 +239,7 @@ def test_mcz_gate():
 
 
 # ==============================================================================
-#                               Circuit Tests
+#                                QFT TESTING
 # ==============================================================================
 
 def test_qft_decomposition(n_qubits: int, initial_index: int):
@@ -274,8 +274,8 @@ def test_qft_decomposition(n_qubits: int, initial_index: int):
         expected_state[k] = (1 / np.sqrt(N)) * np.exp(1j * phase_angle)
 
     # Assert: Check if the final state matches the expected state
-    TOLERANCE = 1e-7
-    assert np.allclose(final_state.state, expected_state, atol=TOLERANCE), (
+    tolerance = 1e-7
+    assert np.allclose(final_state.state, expected_state, atol=tolerance), (
         f"QFT state mismatch for {n_qubits} qubits on |{x_str}>.\n"
         f"Expected:\n{expected_state}\n"
         f"Got:\n{final_state.state}\n"
@@ -288,6 +288,201 @@ def test_qft_decomposition(n_qubits: int, initial_index: int):
     plot_bloch_spheres(final_state.state)
 
 
+# ==============================================================================
+#                      QPE Testing Utility
+# ==============================================================================
+
+def get_most_likely_phase(state: QuantumState, t_qubits: int, target_val: int) -> float:
+    """ Analyzes the final statevector from a QPE circuit to determine the most likely phase. """
+
+    probabilities = state.get_probabilities()
+    n_qubits = state.n
+    m_qubits = n_qubits - t_qubits
+    target_offset = target_val * (2**t_qubits)
+
+    # Isolate the probabilities corresponding to the correct target register outcome
+    counting_probabilities = probabilities[target_offset : target_offset + (2**t_qubits)]
+
+    if np.sum(counting_probabilities) < 0.9:
+        print("Warning: Target register outcome was not well resolved")
+
+    # Find the index k with max probability
+    max_index_k = np.argmax(counting_probabilities)
+
+    # Estimate phase from max probability
+    estimated_phase = max_index_k / (2**t_qubits)
+
+    return estimated_phase
+
+
+def test_qpe_s_gate():
+    """ Tests Quantum Phase Estimation for the S gate (phase phi = 1/4) """
+
+    print("\n" + "=" * 70)
+    print("RUNNING TEST: QUANTUM PHASE ESTIMATION (S Gate)")
+
+    t_qubits = 4  # Precision 1/16
+    m_qubits = 1
+
+    # U|1> = i|1> = e^(i * 2 * pi * 1/4) -> Expected phase: 0.25
+    S_matrix = np.array([[1, 0], [0, 1j]], dtype=complex)
+
+    target_qubit_index = t_qubits
+    target_prep_gates = [QuantumGate.x(target_qubit_index)]
+    target_val = 1  # |1> state
+
+    qpe_circuit = QuantumCircuit.qpe(
+        t_qubits=t_qubits, unitary_matrix=S_matrix, m_qubits=m_qubits, target_initial_state_gates=target_prep_gates
+    )
+
+    initial_state = QuantumState(qpe_circuit.n)
+    print(f"Applying {len(qpe_circuit.gates)} Gates to {qpe_circuit.n}-qubit state...")
+    qpe_circuit.run(initial_state)
+
+    estimated_phi = get_most_likely_phase(initial_state, t_qubits, target_val)
+    expected_phi = 0.25
+    is_correct = np.isclose(estimated_phi, expected_phi)
+
+    print("-" * 70)
+    print(f"Expected Phase: {expected_phi:.4f}")
+    print(f"Estimated Phase (k / 2^t): {estimated_phi:.4f}")
+    print(f"QPE Test PASSED: {is_correct}")
+    print("-" * 70)
+    print(f"Final State: {format_statevector(initial_state.state)}")
+
+
+def test_qpe_t_gate():
+    """ Tests Quantum Phase Estimation for the T gate (phase phi = 1/8) """
+
+    print("\n" + "=" * 70)
+    print("RUNNING TEST: QUANTUM PHASE ESTIMATION (T Gate)")
+
+    t_qubits = 4  # Precision 1/16
+    m_qubits = 1
+
+    T_matrix = np.array([[1, 0], [0, np.exp(1j * np.pi / 4)]], dtype=complex)
+
+    target_qubit_index = t_qubits
+    target_prep_gates = [QuantumGate.x(target_qubit_index)]
+    target_val = 1  # |1> state
+
+    qpe_circuit = QuantumCircuit.qpe(
+        t_qubits=t_qubits, unitary_matrix=T_matrix, m_qubits=m_qubits, target_initial_state_gates=target_prep_gates
+    )
+
+    initial_state = QuantumState(qpe_circuit.n)
+    print(f"Applying {len(qpe_circuit.gates)} Gates to {qpe_circuit.n}-qubit state...")
+    initial_state.state[2 ** t_qubits] = 1.0  # Ensures target is |1> at start
+    initial_state.state[0] = 0.0  # set |0> to 0 for initial state |1>
+    qpe_circuit.run(initial_state)
+
+    estimated_phi = get_most_likely_phase(initial_state, t_qubits, target_val)
+    expected_phi = 0.125
+
+    # expect k=2 for t=4 (2/16 = 0.125)
+    is_correct = np.isclose(estimated_phi, expected_phi)
+
+    print("-" * 70)
+    print(f"Expected Phase: {expected_phi:.4f}")
+    print(f"Estimated Phase (k / 2^t): {estimated_phi:.4f}")
+    print(f"QPE Test PASSED: {is_correct}")
+    print("-" * 70)
+    print(f"Final State: {format_statevector(initial_state.state)}")
+
+
+def test_qpe_approx_pi_3():
+    """ Tests QPE for a phase (1/3) that is NOT a clean power of two fraction. """
+
+    print("\n" + "=" * 70)
+    print("RUNNING TEST: QUANTUM PHASE ESTIMATION (Approx. Phase 1/3)")
+
+    t_qubits = 6  # Higher precision 1/64
+    m_qubits = 1
+
+    # Phase U|1> = e^(i * 2 * pi * 1/3)|1> -> Expected phase: 1/3 ≈ 0.33333
+    expected_phi = 1 / 3
+    U_matrix = np.array([[1, 0], [0, np.exp(1j * 2 * np.pi / 3)]], dtype=complex)
+
+    target_qubit_index = t_qubits
+    target_prep_gates = [QuantumGate.x(target_qubit_index)]
+    target_val = 1  # |1> state
+
+    qpe_circuit = QuantumCircuit.qpe(
+        t_qubits=t_qubits, unitary_matrix=U_matrix, m_qubits=m_qubits, target_initial_state_gates=target_prep_gates
+    )
+
+    initial_state = QuantumState(qpe_circuit.n)
+    print(f"Applying {len(qpe_circuit.gates)} Gates to {qpe_circuit.n}-qubit state...")
+    qpe_circuit.run(initial_state)
+
+    estimated_phi = get_most_likely_phase(initial_state, t_qubits, target_val)
+
+    # For 1/3, the closest fraction is 21/64 ≈ 0.328125 or 22/64 ≈ 0.34375
+    # The true value is 0.33333. test for close approximation.
+    is_correct = np.isclose(estimated_phi, expected_phi, atol=0.01)  # Check within 1% error
+
+    print("-" * 70)
+    print(f"True Phase: {expected_phi:.5f}")
+    print(f"Estimated Phase (k / 2^t): {estimated_phi:.5f}")
+    print(f"QPE Test PASSED: {is_correct} (Closest fraction is {int(estimated_phi * (2 ** t_qubits))}/{2 ** t_qubits})")
+    print("-" * 70)
+    print(f"Final State: {format_statevector(initial_state.state)}")
+
+
+# ==============================================================================
+#                      Grover's Testing Utility
+# ==============================================================================
+
+def test_grover_search(n_qubits: int = 3, marked_index: int = 5):
+    """
+    Tests Grover's Algorithm on an n-qubit system.
+    n_qubits: The number of qubits in the system (default 3).
+    marked_index: The index of the target state to find (default 5, |101> for 3 qubits).
+    """
+    print("\n" + "=" * 70)
+
+    # Check validity of marked_index for n_qubits
+    N = 2 ** n_qubits
+    if marked_index >= N:
+        raise ValueError(f"marked_index ({marked_index}) is too large for {n_qubits} qubits (Max index {N-1}).")
+
+    # Calculate binary string for printing
+    marked_state_str = format(marked_index, f'0{n_qubits}b')
+    print(f"RUNNING TEST: GROVER'S SEARCH ALGORITHM ({n_qubits} Qubits, Target |{marked_state_str}>)")
+
+    # Calculate optimal iterations R and theoretical max probability P_max
+    R = round(math.pi / 4 * math.sqrt(N))
+    theta = math.asin(1 / math.sqrt(N))
+    expected_prob = math.sin( (2 * R + 1) * theta ) ** 2
+
+    # 1. Build the Grover Circuit
+    grover_qc = QuantumCircuit.grover_search(
+        n_qubits=n_qubits,
+        marked_state_index=marked_index
+    )
+
+    # 2. Run Simulation
+    initial_state = QuantumState(n_qubits) # Starts at |0...0>
+    print(f"Optimal Grover iterations (R): {R}")
+    print(f"Applying {len(grover_qc.gates)} Gates to {n_qubits}-qubit state...")
+    grover_qc.run(initial_state)
+
+    # 3. Analyze Results (check probability of the marked state)
+    probabilities = initial_state.get_probabilities()
+    marked_prob = probabilities[marked_index]
+
+    # The probability should be very close to the theoretical max.
+    TOLERANCE = 0.02
+    is_correct = np.isclose(marked_prob, expected_prob, atol=TOLERANCE)
+
+    print("-" * 70)
+    print(f"Target State: |{marked_state_str}> (Index {marked_index})")
+    print(f"Theoretical Max Probability: {expected_prob:.4f}")
+    print(f"Simulated Probability: {marked_prob:.4f}")
+    print(f"Acceptance Range (P_max +/- {TOLERANCE}): [{expected_prob - TOLERANCE:.4f}, {expected_prob + TOLERANCE:.4f}]")
+    print(f"Grover Test PASSED: {is_correct}")
+    print("-" * 70)
+    print(f"Final State: {format_statevector(initial_state.state)}")
 # ==============================================================================
 #                              Main Test Suite
 # ==============================================================================
@@ -337,3 +532,7 @@ def test_all_gates():
 if __name__ == "__main__":
     test_all_gates()
     test_qft_decomposition(4, 7)
+    test_qpe_s_gate()
+    test_qpe_t_gate()
+    test_qpe_approx_pi_3()
+    test_grover_search(4, 13)
