@@ -7,57 +7,80 @@ A lightweight, quantum state-vector circuit simulator, written in Python.
 
 ---
 
-## Core Components
+## Features
 
-### QuantumState
-State vector of an \(n\)-qubit system. Includes:
-- Initialising basis states  
-- Measurement collapse of individual or all qubits.
-- Efficient application of gates using bitmask indexing.  
-
-### QuantumGate
-Defines quantum gates and how they act on specific qubits. Includes:
-- Standard single-qubit gates: X, Y, Z, H.
-- Controlled gates: CX.
-- Multi-controlled gates: MCX.
-- Gate construction from arbitrary unitary matrices.
-
-### QuantumCircuit
-Ordered list of quantum gates that can be executed on a QuantumState. Supports:
-- Adding gates.
-- Execution. 
-- Decoupled circuit construction from state evolution  
-
-### Utils
-A collection of supporting functions used internally. 
+* **`QuantumState`**: Manages the state vector, handles single-qubit initialization, state display, and state-collapse measurement.
+* **`QuantumGate`**: Comprehensive collection of single-qubit, rotation, controlled, and multi-controlled gates applied to QuantumState. Functionality to implement any unitary gate.
+* **`QuantumCircuit`**: Build and run series of quantum gates. Run Monte Carlo simulations. In-built standard quantum circuits. 
+* **`utils`**: Helper functions for visualization, including Bloch sphere plots and probability histograms.
+* **`test_suite`**: A dedicated file for functional testing of all implemented gates.
 
 ---
 
 ## Installation
 
-Clone the repository:
+To set-up, follow the steps:
 
-```bash
+1. Clone the repository:
+
+```
 git clone https://github.com/jonesdwill/Quantum-Simulator.git
 cd Quantum-Simulator
 ```
 
-I recommend setting up a virtual environment to use as your interpreter. If you don't have it already, install venv:
+2. Set up a virtual environment (reccomended): If you don't have it already, install **`venv`**:
 ```
 py -m pip install venv
 ```
-Navigate to project directory, or wherever you want to store your virtual environment:
-```
-cd path\to\project
-```
-Create virtual environment and install packages:
+Navigate to project directory. Create and activate virtual environment.
 ```
 py -m venv venv
 venv\Scripts\activate
+```
+3. Install Required Packages
+```
 pip install -r requirements.txt
 ```
+---
+## Gate Look-up (`QuantumGate`)
+
+The `QuantumGate` class includes an array of static methods for constructing common single-qubit and multi-qubit gates.
+
+| Category | Gate | Method Signature | Description |
+| :--- | :--- | :--- | :--- |
+| **Standard** | Pauli-X (NOT) | `x(targets)` | Bit flip. |
+| | Pauli-Y | `y(targets)` | Phase and bit flip. |
+| | Pauli-Z | `z(targets)` | Phase flip on $|1\rangle$. |
+| | Hadamard | `h(targets)` | Creates superposition. |
+| | Identity | `i(targets)` | No change. |
+| **Phase** | Phase (S) | `s(targets)` | $Z$ rotation by $\pi/2$. |
+| | Inverse Phase ($S^\dagger$) | `sdg(targets)` | $Z$ rotation by $-\pi/2$. |
+| | $\pi/8$ (T) | `t(targets)` | $Z$ rotation by $\pi/4$. |
+| | Inverse $\pi/8$ ($T^\dagger$) | `tdg(targets)` | $Z$ rotation by $-\pi/4$. |
+| **Rotation** | $R_x(\theta)$ | `rx(targets, theta)` | Rotation about X-axis. |
+| | $R_y(\theta)$ | `ry(targets, theta)` | Rotation about Y-axis. |
+| | $R_z(\theta)$ | `rz(targets, theta)` | Rotation about Z-axis. |
+| **Controlled** | CNOT (CX) | `cx(control, target)` | Controlled-X. |
+| | Controlled-Y (CY) | `cy(control, target)` | Controlled-Y. |
+| | Controlled-Z (CZ) | `cz(control, target)` | Controlled-Z. |
+| | SWAP | `swap(q1, q2)` | Swaps two qubit states. |
+| | Controlled-$R_x$ (CRX) | `crx(c, t, theta)` | Controlled-Rotation-X. |
+| | Controlled-$R_y$ (CRY) | `cry(c, t, theta)` | Controlled-Rotation-Y. |
+| | Controlled-$R_z$ (CRZ) | `crz(c, t, theta)` | Controlled-Rotation-Z. |
+| **Multi-Controlled**| Toffoli (CCX/MCX)| `mcx(controls, target)`| Multi-Controlled X. |
+| | MCY | `mcy(controls, target)`| Multi-Controlled Y. |
+| | MCZ | `mcz(controls, target)`| Multi-Controlled Z. |
 
 ---
+
+## Circuit Look-up (`QuantumCircuit`)
+
+The `QuantumCircuit` class includes static methods to quickly generate common n-qubit circuits.
+
+| Circuit Name   | Method Signature        | Number of Qubits     | Description                                              |
+|:---------------|:------------------------|:---------------------|:---------------------------------------------------------|
+| **Bell State** | `QuantumCircuit.bell()` | 2                    | Creates the Bell state                                   |
+| **GHZ State**  | `QuantumCircuit.ghz()`  | $\geq 2$ (default 3) | Creates the $n$-qubit Greenberger–Horne–Zeilinger state. |  
 
 ## License
 
