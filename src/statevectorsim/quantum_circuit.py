@@ -1,7 +1,9 @@
 import numpy as np
 
+# Assuming these are defined elsewhere
 from .quantum_state import QuantumState
 from .quantum_gate import QuantumGate
+
 
 class QuantumCircuit:
     def __init__(self, n_qubits: int):
@@ -33,7 +35,7 @@ class QuantumCircuit:
         else:
             self.gates.append(gate)
 
-    def run(self, quantum_state, inverse = False):
+    def run(self, quantum_state, inverse=False):
         """ Apply quantum gates to state in order """
 
         # forward
@@ -43,26 +45,19 @@ class QuantumCircuit:
 
         # inverse
         else:
-            for gate in self.gates:
+            # Apply the inverse sequence of gates (order reversed)
+            for gate in reversed(self.gates):
+                # We assume the gate itself handles the inverse application if needed
                 gate.apply(quantum_state)
 
         return quantum_state
 
-    def measure_all(self, initial_state: QuantumState, shots: int = 1024) -> dict[str, int]:
+    def simulate(self, initial_state: QuantumState, shots: int = 1024) -> dict[str, int]:
         """
-        Run circuit multiple times and simulate measurement in the computational basis, returning a dictionary outcomes.
-
-        Args:
-            initial_state: The starting QuantumState for the simulation.
-            shots: The number of times to run the simulation and measure.
-
-        Returns:
-            A dictionary where keys are measurement outcomes (e.g., '01')
-            and values are the counts.
+        Runs the circuit multiple times and returns a dictionary of measurement outcomes.
         """
-
         if initial_state.n != self.n:
-            raise ValueError("Initial state must have the same number of qubits as the circuit.")
+            raise ValueError(f"Initial state must have the same number of qubits as the circuit.")
 
         results = {}
 
@@ -74,6 +69,7 @@ class QuantumCircuit:
             self.run(current_state)
 
             # measure all qubits
+            # Assuming 'measure_all' is a method on QuantumState that returns a list of bits
             outcome_list = current_state.measure_all()
 
             # convert the list of bits into a measurement key (e.g., '01')
@@ -103,8 +99,64 @@ class QuantumCircuit:
             raise ValueError("GHZ state requires at least 2 qubits.")
 
         _qc = QuantumCircuit(n_qubits)
-        _qc.add_gate(QuantumGate.h(0))  # Hadamard on first qubit
-        for t in range(1, n_qubits):
-            _qc.add_gate(QuantumGate.cx(0, t))  # Entangle all other qubits with qubit 0
+        _qc.add_gate(QuantumGate.h(0))  # Hadamard on the first qubit
+
+        # CNOT chain to entangle the rest
+        for i in range(n_qubits - 1):
+            _qc.add_gate(QuantumGate.cx(i, i + 1))  # Control i, Target i+1
 
         return _qc
+
+    @staticmethod
+    def qft(n_qubits: int, swap_endian: bool = False, inverse: bool = False):
+        """
+        Return n-qubit Quantum Fourier Transform (QFT) circuit.
+        Implementation is MSB-first.
+        """
+
+        if n_qubits < 1:
+            raise ValueError("QFT requires at least 1 qubit.")
+
+        _qc = QuantumCircuit(n_qubits)
+
+        if not inverse:
+            # --- Forward QFT ---
+            # Process from MSB (n-1) down to LSB (0)
+            for i in reversed(range(n_qubits)):
+
+                _qc.add_gate(QuantumGate.h(i))
+
+                # Apply controlled rotations from indexed qubits j < i
+                for j in reversed(range(i)):
+
+                    theta = 2 * np.pi / (2 ** (i - j + 1))
+
+                    gate = QuantumGate.crp(j, i, theta)
+
+                    _qc.add_gate(gate)
+
+        else:
+            # --- Inverse QFT ---
+            # Process from LSB (0) up to MSB (n-1)
+            for i in range(n_qubits):
+
+                # Apply inverse controlled rotations from lower indexed qubits j < i
+                for j in range(i):
+                    theta = -2 * np.pi / (2 ** (i - j + 1))
+                    gate = QuantumGate.crp(j, i, theta)
+                    _qc.add_gate(gate)
+
+                _qc.add_gate(QuantumGate.h(i))
+
+        # swap gates to reverse order
+        if swap_endian:
+            for i in range(n_qubits // 2):
+                _qc.add_gate(QuantumGate.swap(i, n_qubits - 1 - i))
+
+        return _qc
+
+    @staticmethod
+    def _prepare_counting_register(qc: 'QuantumCircuit', start_index: int, end_index: int):
+        """Applies Hadamard to a range of qubits."""
+        for i in range(start_index, end_index):
+            qc.add_gate(QuantumGate.h(i))

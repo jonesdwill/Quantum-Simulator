@@ -4,7 +4,7 @@ from typing import Union, List
 from .quantum_state import QuantumState
 
 class QuantumGate:
-    def __init__(self, matrix: np.ndarray, targets: list[int]):
+    def __init__(self, matrix: np.ndarray, targets: list[int], name: str = 'CustomGate'):
         # robust check
         expected_dim = 2 ** len(targets)
         if matrix.shape != (expected_dim, expected_dim):
@@ -14,8 +14,15 @@ class QuantumGate:
                 f"for {len(targets)} targets."
             )
         # gate assignment
+        self.name = name
         self.matrix = matrix
-        self.targets = targets
+        self.targets = [int(t) for t in targets]
+
+    def __str__(self):
+        """String representation of the QuantumGate."""
+        n_qubits = len(self.targets)
+        targets_str = ", ".join(map(str, self.targets))
+        return f"{n_qubits}-Qubit {self.name} Gate on Qubits [{targets_str}]"
 
     def apply(self, quantum_state):
         """
@@ -28,14 +35,23 @@ class QuantumGate:
         state = quantum_state.state.copy()
         k = len(self.targets)
 
+        # Ensure target qubits are within the valid range [0, n-1] for the state
+        for target in self.targets:
+            if target >= n or target < 0:
+                raise ValueError(
+                    f"QuantumGate targets {self.targets} include an index ({target}) "
+                    f"outside the valid range [0, {n-1}] for a {n}-qubit state. "
+                    f"Check your circuit construction to ensure all gates reference valid qubits."
+                )
+
         # ----------------------------------------------------
         #               Single-qubit gate (k=1)
         # ----------------------------------------------------
         if k == 1:
-            t = self.targets[0] # get single target
-            target_mask = 1 << t # bitmask of 2^t
-            size = 1 << n # bitmask of 2^n
-            gate_matrix = self.matrix # 2x2 matrix for single qubit gate
+            t = self.targets[0]  # get single target
+            target_mask = 1 << t  # bitmask of 2^t
+            size = 1 << n  # bitmask of 2^n
+            gate_matrix = self.matrix  # 2x2 matrix for single qubit gate
 
             # loop over qubits
             for i in range(size):
@@ -107,18 +123,18 @@ class QuantumGate:
     # -------------------------------------
 
     @staticmethod
-    def _create_single_gates(targets: Union[int, List[int]], matrix: np.ndarray) -> List['QuantumGate']:
+    def _create_single_gates(targets: Union[int, List[int]], matrix: np.ndarray, name: str = 'CustomSingleGate') -> List['QuantumGate']:
         """Helper to apply single-qubit gate to one or multiple qubits."""
         if isinstance(targets, int):
             targets = [targets]
 
         # returns a list of QuantumGate objects. If only one target, it's a list with one item.
-        return [QuantumGate(matrix, [t]) for t in targets]
+        return [QuantumGate(matrix, [t], name) for t in targets]
 
     @staticmethod
-    def _create_controlled_gate(control: int, target: int, matrix: np.ndarray) -> 'QuantumGate':
+    def _create_controlled_gate(control: int, target: int, matrix: np.ndarray, name: str = 'CustomMultiGate') -> 'QuantumGate':
         """Helper function to create a 2-qubit gate instance."""
-        return QuantumGate(matrix, [control, target])
+        return QuantumGate(matrix, [control, target], name)
 
 
 
@@ -130,31 +146,31 @@ class QuantumGate:
     def x(targets: Union[int, List[int]]):
         """Single or multiple Pauli-X gates."""
         matrix = np.array([[0, 1], [1, 0]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'x')
 
     @staticmethod
     def y(targets: Union[int, List[int]]):
         """Single or multiple Pauli-Y gates."""
         matrix = np.array([[0, -1j], [1j, 0]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'y')
 
     @staticmethod
     def z(targets: Union[int, List[int]]):
         """Single or multiple Pauli-Z gates."""
         matrix = np.array([[1, 0], [0, -1]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'z')
 
     @staticmethod
     def h(targets: Union[int, List[int]]):
         """Single or multiple Hadamard gates."""
         matrix = (1 / np.sqrt(2)) * np.array([[1, 1], [1, -1]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'h')
 
     @staticmethod
     def i(targets: Union[int, List[int]]):
         """Identity gate"""
         matrix = np.eye(2, dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'i')
 
     # -------------------------------------
     #     Phase Gates (S, T, Sdag, Tdag)
@@ -165,14 +181,14 @@ class QuantumGate:
         """Phase gate (S-gate, sqrt(Z)). Equivalent to Rz(pi/2)."""
         # Matrix: [[1, 0], [0, i]]
         matrix = np.array([[1, 0], [0, 1j]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 's')
 
     @staticmethod
     def sdg(targets: Union[int, List[int]]):
         """Inverse Phase gate (S-dagger). Equivalent to Rz(-pi/2)."""
         # Matrix: [[1, 0], [0, -i]]
         matrix = np.array([[1, 0], [0, -1j]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'sdg')
 
     @staticmethod
     def t(targets: Union[int, List[int]]):
@@ -180,7 +196,7 @@ class QuantumGate:
         # Matrix: [[1, 0], [0, exp(i*pi/4)]]
         phase = np.exp(1j * math.pi / 4)
         matrix = np.array([[1, 0], [0, phase]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 't')
 
     @staticmethod
     def tdg(targets: Union[int, List[int]]):
@@ -188,7 +204,7 @@ class QuantumGate:
         # Matrix: [[1, 0], [0, exp(-i*pi/4)]]
         phase = np.exp(-1j * math.pi / 4)
         matrix = np.array([[1, 0], [0, phase]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, 'tdg')
 
 
     # -------------------------------------
@@ -203,7 +219,7 @@ class QuantumGate:
         s = math.sin(half_theta)
         matrix = np.array([[c, -1j * s],
                            [-1j * s, c]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, f'rx({theta})')
 
     @staticmethod
     def ry(targets: Union[int, List[int]], theta: float):
@@ -213,7 +229,7 @@ class QuantumGate:
         s = math.sin(half_theta)
         matrix = np.array([[c, -s],
                            [s, c]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, f'ry({theta})')
 
     @staticmethod
     def rz(targets: Union[int, List[int]], theta: float):
@@ -221,7 +237,7 @@ class QuantumGate:
         half_theta = theta / 2.0
         matrix = np.array([[np.exp(-1j * half_theta), 0],
                            [0, np.exp(1j * half_theta)]], dtype=complex)
-        return QuantumGate._create_single_gates(targets, matrix)
+        return QuantumGate._create_single_gates(targets, matrix, f'rz({theta})')
 
 
 
@@ -236,20 +252,20 @@ class QuantumGate:
                            [0, 1, 0, 0],
                            [0, 0, 0, 1],
                            [0, 0, 1, 0]], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, 'cx')
 
     @staticmethod
     def cy(control: int, target: int):
         """Controlled-y gate (2 qubits) - Applies y if both qubits are |1>"""
         matrix = np.array([[0, -1j], [1j, 0]], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, 'cy')
 
     @staticmethod
     def cz(control: int, target: int):
         """Controlled-Z gate (2 qubits) - Applies Z if both qubits are |1>"""
         # CZ matrix is diagonal with [1, 1, 1, -1]
         matrix = np.diag([1, 1, 1, -1]).astype(complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, 'cz')
 
     @staticmethod
     def swap(q1: int, q2: int):
@@ -258,7 +274,7 @@ class QuantumGate:
                            [0, 0, 1, 0],
                            [0, 1, 0, 0],
                            [0, 0, 0, 1]], dtype=complex)
-        return QuantumGate._create_controlled_gate(q1, q2, matrix)  # Using the 2-qubit helper here
+        return QuantumGate._create_controlled_gate(q1, q2, matrix, 'swap')  # Using the 2-qubit helper here
 
 
 
@@ -287,7 +303,7 @@ class QuantumGate:
             [0, 0, -1j * s, c]
         ], dtype=complex)
 
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, f'crx({theta})')
 
     @staticmethod
     def cry(control: int, target: int, theta: float) -> 'QuantumGate':
@@ -310,22 +326,38 @@ class QuantumGate:
             [0, 0, s, c]
         ], dtype=complex)
 
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, f'cry({theta})')
 
 
     @staticmethod
     def crz(control: int, target: int, theta: float) -> 'QuantumGate':
         """Controlled-Rz gate Rz(theta)."""
         half_theta = theta / 2.0
-        # Use np.exp for complex exponentiation
         e_neg = np.exp(-1j * half_theta)
         e_pos = np.exp(1j * half_theta)
         matrix = np.array([
-            [1, 0, 0, 0], [0, 1, 0, 0],
-            [0, 0, e_neg, 0], [0, 0, 0, e_pos]
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, e_neg, 0],
+            [0, 0, 0, e_pos]
         ], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix)
+        return QuantumGate._create_controlled_gate(control, target, matrix, f'crz({theta})')
 
+    @staticmethod
+    def crp(control: int, target: int, theta: float):
+        """ Controlled Phase Gate (CRP or CP(theta)).
+        Applies a phase shift of exp(i*theta) to the |11> component.
+        """
+
+        # control and target are already type-hinted as int
+        if control == target:
+            raise ValueError("Control and target qubits must be distinct.")
+
+        # The matrix is defined for sorted indices |00>, |01>, |10>, |11>
+        matrix = np.eye(4, dtype=complex)
+        matrix[3, 3] = np.exp(1j * theta)
+
+        return QuantumGate._create_controlled_gate(control, target, matrix, f'crp({theta})')
 
 
     # -----------------------------------------
@@ -355,7 +387,7 @@ class QuantumGate:
         matrix[index_1, index_0] = 1
         matrix[index_1, index_1] = 0
 
-        return QuantumGate(matrix, all_targets)
+        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcx')
 
     @staticmethod
     def mcy(controls: List[int], target: int):
@@ -379,7 +411,7 @@ class QuantumGate:
         matrix[index_1, index_0] = 1j
         matrix[index_1, index_1] = 0
 
-        return QuantumGate(matrix, all_targets)
+        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcy')
 
     @staticmethod
     def mcz(controls: List[int], target: int):
@@ -399,4 +431,4 @@ class QuantumGate:
         # apply a phase flip (-1) only when all inputs are 1
         matrix[index_all_ones, index_all_ones] = -1
 
-        return QuantumGate(matrix, all_targets)
+        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcz')

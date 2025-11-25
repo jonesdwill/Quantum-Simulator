@@ -94,7 +94,7 @@ def plot_bloch_spheres(state, fig_size=(4, 4), max_cols=4):
         # plot bloch-vector
         ax.quiver(
             0, 0, 0,
-            vec[0], vec[1], vec[2],
+            vec[0], -1*vec[1], vec[2],
             color='blue',
             linewidth=2,
             arrow_length_ratio=0.2,
@@ -214,3 +214,26 @@ def plot_histogram(results: Dict[str, int], shots: int):
 
 
     plt.show()
+
+
+def format_statevector(state: np.ndarray) -> str:
+    """
+    Formats the complex state vector into a readable string representation
+    with basis states (e.g., |00> 0.7071+0.0000j).
+    """
+    n_qubits = int(np.log2(len(state)))
+    output = []
+
+    for i, amp in enumerate(state):
+        if np.abs(amp) > 1e-9:  # Only show non-zero amplitudes
+            # Convert index to binary string representation
+            basis_state = format(i, f'0{n_qubits}b')
+
+            # Format amplitude (e.g., 0.7071+0.0000j)
+            real = f"{amp.real:+.4f}"
+            imag = f"{amp.imag:+.4f}"
+            amplitude_str = f"({real}{imag}j)"
+
+            output.append(f"|{basis_state}> {amplitude_str}")
+
+    return "\n".join(output)
