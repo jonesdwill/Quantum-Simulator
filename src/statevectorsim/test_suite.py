@@ -1,6 +1,7 @@
 import math
+import numpy as np
 from statevectorsim import QuantumState, QuantumCircuit, QuantumGate
-from statevectorsim.utils import plot_bloch_spheres
+from statevectorsim.utils import plot_bloch_spheres, format_statevector
 
 # ==============================================================================
 #                      Testing Utility Functions
@@ -15,28 +16,48 @@ def run_test_and_plot(title: str, circuit: QuantumCircuit, target_qubits: list[i
     print("=" * 70)
     print(f"RUNNING TEST: {title} ({n_qubits} Qubits)")
 
-    # 1. Initialize the state to |0...0>
+    # Initialize the state to |0...0>
     state = QuantumState(n_qubits)
 
-    # 2. Run the circuit
+    # Run the circuit
     print("Applying Gates...")
     circuit.run(state)
 
-    # Optional: Print the resulting statevector for verification
-    # print(f"Final State Vector: {state.state}")
+    # Print the resulting statevector for verification
+    print(f"Final State Vector: {state.state}")
 
-    # 3. Visualize the Resulting State
+    # Visualize the Resulting State
     print(f"Plotting Bloch Spheres for {n_qubits} Qubits...")
-
-    # # If specific targets are provided (e.g., for 1-qubit tests in a 2-qubit system), use them.
-    # # Otherwise, plot all qubits.
-    # qubits_to_plot = target_qubits if target_qubits is not None else list(range(n_qubits))
 
     # The plot_bloch_spheres function is expected to handle the state vector
     plot_bloch_spheres(state.state)
 
     print("-" * 70)
 
+
+# def run_circuit_test(title: str, n_qubits: int, circuit: QuantumCircuit):
+#     """
+#     Initializes a QuantumState, runs the circuit, and visualizes the result.
+#     """
+#     print("=" * 70)
+#     print(f"RUNNING CIRCUIT TEST: {title} ({n_qubits} Qubits)")
+#
+#     # Initialize the state to |0...0>
+#     state = QuantumState(n_qubits)  # Initializes to |0>^N
+#     # Assuming .state is the correct attribute based on the previous fix attempt
+#     print(f"Initial State Vector:\n{state.state}")
+#
+#     # Run the circuit
+#     print("\nApplying Gates...")
+#     final_state = circuit.run(state)
+#
+#     # Print Final State Vector
+#     print("\n--- Final State Vector (Amplitudes) ---")
+#     # Display the state vector using the utility function
+#     print(format_statevector(final_state.statevector()))
+#
+#     # Visualize the Resulting State on Bloch Spheres
+#     plot_bloch_spheres(final_state.statevector(), max_cols=n_qubits)
 
 # ==============================================================================
 #                      Single-Qubit Gate Tests (1 Qubit)
@@ -218,6 +239,56 @@ def test_mcz_gate():
 
 
 # ==============================================================================
+#                               Circuit Tests
+# ==============================================================================
+
+def test_qft_decomposition(n_qubits: int, initial_index: int):
+    """
+    Test the QFT implementation by applying it to a basis state |x> and checking against analytical result.
+    """
+
+    # Pad the index for printing
+    x_str = bin(initial_index)[2:].zfill(n_qubits)
+    print(f"--- Testing QFT Decomposition for |{x_str}> ({n_qubits} qubits) ---")
+
+    # Define the input state |x>
+    initial_state = QuantumState(n_qubits)
+    initial_state.basis_state(initial_index)
+
+    # Build the QFT circuit. QFT swaps endian so reverse.
+    qft_circuit = QuantumCircuit.qft(n_qubits, swap_endian=True)
+
+    # Run the circuit
+    final_state = qft_circuit.run(initial_state)
+
+    # Define the expected output state (analytical result)
+    expected_state = np.zeros(2**n_qubits, dtype=complex)
+    N = 2**n_qubits
+    x = initial_index
+
+    # Calculate expected amplitudes for each basis state |k>
+    for k in range(N):
+        # Calculate the phase: 2 * pi * x * k / N
+        phase_angle = 2 * np.pi * x * k / N
+        # Amplitude is (1/sqrt(N)) * exp(i * phase_angle)
+        expected_state[k] = (1 / np.sqrt(N)) * np.exp(1j * phase_angle)
+
+    # Assert: Check if the final state matches the expected state
+    TOLERANCE = 1e-7
+    assert np.allclose(final_state.state, expected_state, atol=TOLERANCE), (
+        f"QFT state mismatch for {n_qubits} qubits on |{x_str}>.\n"
+        f"Expected:\n{expected_state}\n"
+        f"Got:\n{final_state.state}\n"
+    )
+
+    print(f"QFT Test ({n_qubits} qubits on |{x_str}>) PASSED.")
+    print("--- QFT Test Results (First 8 amplitudes) ---")
+    print(f"Final State Vector: {final_state.state[:8]}...")
+
+    plot_bloch_spheres(final_state.state)
+
+
+# ==============================================================================
 #                              Main Test Suite
 # ==============================================================================
 
@@ -265,3 +336,4 @@ def test_all_gates():
 
 if __name__ == "__main__":
     test_all_gates()
+    test_qft_decomposition(4, 7)
