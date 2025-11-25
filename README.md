@@ -81,6 +81,7 @@ The `QuantumCircuit` class includes static methods to quickly generate common n-
 |:---------------|:------------------------|:---------------------|:---------------------------------------------------------------------------------------------------------|
 | **Bell State** | `QuantumCircuit.bell()` | 2                    | Creates the Bell state $(\|0\rangle + \|1\rangle)/ \sqrt{2}$                                             |
 | **GHZ State**  | `QuantumCircuit.ghz()`  | $\geq 2$ (default 3) | Creates the $n$-qubit Greenberger–Horne–Zeilinger state $(\|00..00\rangle + \|11..11\rangle)/ \sqrt{2}$. |  
+| **QFT**        | `QuantumCircuit.qft()`  | $\geq 1$             | Performs quantum fourier transform, and it's inverse                                                     |  
 
 ## License
 
