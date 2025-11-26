@@ -77,12 +77,14 @@ The `QuantumGate` class includes an array of static methods for constructing com
 
 The `QuantumCircuit` class includes static methods to quickly generate common n-qubit circuits.
 
-| Circuit Name   | Method Signature        | Number of Qubits     | Description                                                                                              |
-|:---------------|:------------------------|:---------------------|:---------------------------------------------------------------------------------------------------------|
-| **Bell State** | `QuantumCircuit.bell()` | 2                    | Creates the Bell state $(\|0\rangle + \|1\rangle)/ \sqrt{2}$                                             |
-| **GHZ State**  | `QuantumCircuit.ghz()`  | $\geq 2$ (default 3) | Creates the $n$-qubit Greenberger–Horne–Zeilinger state $(\|00..00\rangle + \|11..11\rangle)/ \sqrt{2}$. |  
-| **QFT**        | `QuantumCircuit.qft()`  | $\geq 1$             | Performs quantum fourier transform, and it's inverse                                                     |  
-
+| Circuit Name |                                 Method Signature                                 | Qubit Count |                                                    Description                                                     |
+| :---: |:--------------------------------------------------------------------------------:| :---: |:------------------------------------------------------------------------------------------------------------------:|
+| **Bell State** |                        `QuantumCircuit.bell(n_qubits: 2)`                        | 2 |                     Creates the Bell state $(\vert 00 \rangle + \vert 11 \rangle)/ \sqrt{2}$.                      |
+| **GHZ State** |                       `QuantumCircuit.ghz(n_qubits: int)`                        | $\geq 2$ | Creates the $n$-qubit Greenberger–Horne–Zeilinger state $(\vert 00..00 \rangle + \vert 11..11 \rangle)/ \sqrt{2}$. |
+| **Grover Search** |               `QuantumCircuit.grover_search(n_qubits, marked_idx)`               | $\geq 2$ |                                   Grover's algorithm to find marked state index.                                   |
+| **QFT** |            `QuantumCircuit.qft(qubits: List[int], swap_endian: bool)`            | $\geq 1$ |                             Performs Quantum Fourier Transform (QFT) on QuantumState.                              |
+| **IQFT** | `QuantumCircuit.qft(qubits: List[int], swap_endian: bool, inverse: bool = True)` | $\geq 1$ |                         Performs Inverse Quantum Fourier Transform (IQFT) on QuantumState.                         |
+| **QFT Adder** |                    `QuantumCircuit.qft_adder(n_qubits: int)`                     | $2n$ |       Performs addition: $\vert A \rangle \vert B \rangle \to \vert A \rangle \vert B+A \pmod{2^n} \rangle$.       |
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for full details.
