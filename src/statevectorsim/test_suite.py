@@ -2,6 +2,7 @@ import math
 import numpy as np
 from statevectorsim import QuantumState, QuantumCircuit, QuantumGate
 from statevectorsim.utils import plot_bloch_spheres, format_statevector
+from numpy import testing
 
 # ==============================================================================
 #                      Testing Utility Functions
@@ -483,6 +484,71 @@ def test_grover_search(n_qubits: int = 3, marked_index: int = 5):
     print(f"Grover Test PASSED: {is_correct}")
     print("-" * 70)
     print(f"Final State: {format_statevector(initial_state.state)}")
+
+
+# ==============================================================================
+#                      QFT ADDER Testing Utility
+# ==============================================================================
+
+def test_qft_adder(A: int, B: int, n_bits: int, tolerance: float = 1e-6):
+    """
+    Generic QFT Adder test: verifies |B>|A> → |B + A mod 2^n>|A>
+
+    Args:
+        A (int): the addend (stored in lower n_bits)
+        B (int): the target sum register (stored in upper n_bits)
+        n_bits (int): number of bits in each register
+    """
+
+    if A >= 2**n_bits or B >= 2**n_bits:
+        raise ValueError(f"A and B must be < 2^{n_bits}")
+
+    print("="*70)
+    print(f"Testing QFT Adder: A={A}, B={B}, n={n_bits} bits => Sum={(A+B)%(2**n_bits)}")
+    print(f"Total Qubits = {2*n_bits}")
+
+    # Encode |B>|A> (B in MSB register, A in LSB register)
+    initial_index = (B << n_bits) + A
+
+    # Expected final state index
+    expected_sum = (A + B) % (2**n_bits)
+    final_index = (expected_sum << n_bits) + A
+
+    # Create initial state
+    state = QuantumState(2*n_bits)
+    state.basis_state(initial_index)
+
+    print(f"Initial State index={initial_index} => |{B:0{n_bits}b}{A:0{n_bits}b}>")
+
+    # Build adder
+    qc = QuantumCircuit.qft_adder(n_bits)
+
+    # Run
+    qc.run(state)
+
+    # Final statevector:
+    sv = state.state
+
+    # Check success condition:
+    correct_prob = abs(sv[final_index])**2
+    passed = correct_prob > (1 - tolerance)
+
+    if passed:
+        print(f"PASSED: Correct result index {final_index} with prob={correct_prob:.4f}")
+    else:
+        print(f"FAILED: Expected index {final_index} but found prob={correct_prob:.4f}")
+
+    print(f"Expected output state: |{expected_sum:0{n_bits}b}{A:0{n_bits}b}>")
+
+    # Print non-zero amplitudes for inspection
+    print("Final State Non-Zero Amplitudes:")
+    for idx, amp in enumerate(sv):
+        if abs(amp) > 1e-8:
+            print(f"  idx {idx:2d}: |{idx:0{2*n_bits}b}> amplitude={amp}")
+
+    print("="*70)
+
+
 # ==============================================================================
 #                              Main Test Suite
 # ==============================================================================
