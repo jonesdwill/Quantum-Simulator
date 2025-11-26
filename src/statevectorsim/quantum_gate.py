@@ -24,18 +24,211 @@ class QuantumGate:
         targets_str = ", ".join(map(str, self.targets))
         return f"{n_qubits}-Qubit {self.name} Gate on Qubits [{targets_str}]"
 
-    def apply(self, quantum_state):
+    # def apply(self, quantum_state, method: str = 'tensor'):
+    #     """
+    #     Apply k-qubit QuantumGate to an n-qubit QuantumState.
+    #     - k=1: bitmask iteration.
+    #     - k>=2: tensor reshape and permutation.
+    #     """
+    #     # get statevector, n and k.
+    #     n = quantum_state.n
+    #     state = quantum_state.state.copy()
+    #     k = len(self.targets)
+    #
+    #     # Ensure target qubits are within the valid range [0, n-1] for the state
+    #     for target in self.targets:
+    #         if target >= n or target < 0:
+    #             raise ValueError(
+    #                 f"QuantumGate targets {self.targets} include an index ({target}) "
+    #                 f"outside the valid range [0, {n-1}] for a {n}-qubit state. "
+    #                 f"Check your circuit construction to ensure all gates reference valid qubits."
+    #             )
+    #
+    #     # ----------------------------------------------------
+    #     #               Single-qubit gate (k=1)
+    #     # ----------------------------------------------------
+    #     if k == 1:
+    #         t = self.targets[0]  # get single target
+    #         target_mask = 1 << t  # bitmask of 2^t
+    #         size = 1 << n  # bitmask of 2^n
+    #         gate_matrix = self.matrix  # 2x2 matrix for single qubit gate
+    #
+    #         # loop over qubits
+    #         for i in range(size):
+    #             # only iterate over 2-dim subspace once (by picking where target qubit is |0>)
+    #             if i & target_mask:
+    #                 continue
+    #
+    #             # |0> and |1> indices affected qubit
+    #             j0 = i
+    #             j1 = i | target_mask
+    #
+    #             # get qubit amplitudes
+    #             block = np.array([state[j0], state[j1]])
+    #
+    #             # apply 2x2 gate to amplitudes
+    #             new_block = gate_matrix @ block
+    #
+    #             # write back
+    #             state[j0] = new_block[0]
+    #             state[j1] = new_block[1]
+    #
+    #         # update state
+    #         quantum_state.state = state
+    #         return
+    #
+    #     elif k >= 2:
+    #
+    #         # -------------------------------------------------------
+    #         # Multi-qubit gates (k >= 2) - Generalized Tensor Method
+    #         # -------------------------------------------------------
+    #
+    #         if method == 'tensor':
+    #             # reshape state vector into an N-dimensional tensor. (q_{n-1}, q_{n-2}, ..., q_0)
+    #             tensor_state = state.reshape([2] * n)
+    #
+    #             # map qubit indices to tensor axes. 'i' maps to tensor axis 'n - 1 - i'.
+    #             target_axes = [n - 1 - q_idx for q_idx in self.targets]
+    #
+    #             # define new axis: target qubit axes first, then the rest
+    #             all_axes = list(range(n))
+    #             axes_permuted = target_axes + [a for a in all_axes if a not in target_axes]
+    #
+    #             # apply forward permutation to bring targets to the front (axes 0 to k-1)
+    #             tensor_state = np.transpose(tensor_state, axes_permuted)
+    #
+    #             # reshape state tensor for matrix multiplication by gate (2^k, 2^(n-k))
+    #             dims_other = tensor_state.shape[k:]
+    #             tensor_state = tensor_state.reshape(2 ** k, -1)
+    #
+    #             # apply the gate matrix
+    #             tensor_state = self.matrix @ tensor_state
+    #
+    #             # reshape back to original tensor shape
+    #             tensor_state = tensor_state.reshape([2] * k + list(dims_other))
+    #
+    #             # inverse qubit permutation
+    #             axes_original = np.argsort(axes_permuted)
+    #             tensor_state = np.transpose(tensor_state, axes_original)
+    #
+    #             # flatten and update the quantum state
+    #             quantum_state.state = tensor_state.reshape(-1)
+    #             return
+    #
+    #     else:
+    #         raise ValueError("Gate targets list is empty.")
+
+
+    # -------------------------------------
+    #           Helper Methods
+    # -------------------------------------
+
+    # -------------------------------------------
+    #    Apply Gate Logic (Speed-up bottleneck)
+    # -------------------------------------------
+
+    def _apply_tensor(self, state: np.ndarray, n: int, k: int) -> np.ndarray:
         """
-        Apply k-qubit QuantumGate to an n-qubit QuantumState.
-        - k=1: bitmask iteration.
-        - k>=2: tensor reshape and permutation.
+        Multi-qubit gate application using NumPy's efficient tensor reshape and permutation (k >= 1).
         """
-        # get statevector, n and k.
+
+        gate_matrix = self.matrix
+
+        # reshape state vector into an N-dimensional tensor. (q_{n-1}, q_{n-2}, ..., q_0)
+        tensor_state = state.reshape([2] * n)
+
+        # map qubit indices to tensor axes. 'i' maps to tensor axis 'n - 1 - i'.
+        target_axes = [n - 1 - q_idx for q_idx in self.targets]
+
+        # define new axis: target qubit axes first, then the rest
+        all_axes = list(range(n))
+        axes_permuted = target_axes + [a for a in all_axes if a not in target_axes]
+
+        # apply forward permutation to bring targets to the front (axes 0 to k-1)
+        tensor_state = np.transpose(tensor_state, axes_permuted)
+
+        # reshape state tensor for matrix multiplication by gate (2^k, 2^(n-k))
+        dims_other = tensor_state.shape[k:]
+        tensor_state = tensor_state.reshape(2 ** k, -1)
+
+        # apply the gate matrix
+        tensor_state = gate_matrix @ tensor_state
+
+        # reshape back to original tensor shape
+        tensor_state = tensor_state.reshape([2] * k + list(dims_other))
+
+        # inverse qubit permutation
+        axes_original = np.argsort(axes_permuted)
+        tensor_state = np.transpose(tensor_state, axes_original)
+
+        # flatten and return
+        return tensor_state.reshape(-1)
+
+    def _apply_bitmask(self, state: np.ndarray, n: int, k: int) -> np.ndarray:
+        """
+        Multi-qubit gate application using generalized index-based iteration (k >= 1).
+        """
+
+        gate_matrix = self.matrix
+        dim_k = 2 ** k
+        new_state = state.copy()
+
+        # Sort targets to ensure the statevector block's internal order matches the gate matrix's order.
+        sorted_targets = sorted(self.targets)
+
+        # Pre-calculate the index offsets
+        index_offsets = np.zeros(dim_k, dtype=int)
+        for m in range(dim_k):
+            offset = 0
+            for j, t in enumerate(sorted_targets):
+                # If the j-th bit of m is 1, add 1 << t (the state index bit) to offset
+                if (m >> j) & 1:
+                    offset |= (1 << t)
+            index_offsets[m] = offset
+
+        # iteration block mask. sum of all target masks. determines indices 'i' where all targets are |0>.
+        control_mask = sum(1 << t for t in self.targets)
+
+        # Iterate over the 2^(n-k) blocks
+        size = 1 << n
+
+        for i in range(size):
+            # start iteration at the index 'i' where all target qubits are |0>
+            if i & control_mask:
+                continue
+
+            # extract the 2^k amplitudes from the statevector into a temporary block
+            block = np.zeros(dim_k, dtype=complex)
+            for m in range(dim_k):
+                state_idx = i | index_offsets[m]
+                block[m] = state[state_idx]
+
+            # Apply gate matrix
+            new_block = gate_matrix @ block
+
+            # Write new block back to the statevector
+            for m in range(dim_k):
+                state_idx = i | index_offsets[m]
+                new_state[state_idx] = new_block[m]
+
+        return new_state
+
+    def apply(self, quantum_state, method: str = 'tensor'):
+        """
+        Apply k-qubit QuantumGate to an n-qubit QuantumState using the specified method.
+
+        Args:
+            quantum_state: The QuantumState object.
+            method (str): implementation strategy.
+                            - 'tensor' (NumPy reshape/transpose)
+                            - 'bitmask' (optimized index-based iteration).
+        """
+
         n = quantum_state.n
         state = quantum_state.state.copy()
         k = len(self.targets)
 
-        # Ensure target qubits are within the valid range [0, n-1] for the state
+        # target qubits should be in [0, n-1]
         for target in self.targets:
             if target >= n or target < 0:
                 raise ValueError(
@@ -44,82 +237,19 @@ class QuantumGate:
                     f"Check your circuit construction to ensure all gates reference valid qubits."
                 )
 
-        # ----------------------------------------------------
-        #               Single-qubit gate (k=1)
-        # ----------------------------------------------------
-        if k == 1:
-            t = self.targets[0]  # get single target
-            target_mask = 1 << t  # bitmask of 2^t
-            size = 1 << n  # bitmask of 2^n
-            gate_matrix = self.matrix  # 2x2 matrix for single qubit gate
-
-            # loop over qubits
-            for i in range(size):
-                # only iterate over 2-dim subspace once (by picking where target qubit is |0>)
-                if i & target_mask:
-                    continue
-
-                # |0> and |1> indices affected qubit
-                j0 = i
-                j1 = i | target_mask
-
-                # get qubit amplitudes
-                block = np.array([state[j0], state[j1]])
-
-                # apply 2x2 gate to amplitudes
-                new_block = gate_matrix @ block
-
-                # write back
-                state[j0] = new_block[0]
-                state[j1] = new_block[1]
-
-            # update state
-            quantum_state.state = state
-            return
-
-        # -------------------------------------------------------
-        # Multi-qubit gates (k >= 2) - Generalized Tensor Method
-        # -------------------------------------------------------
-        elif k >= 2:
-
-            # reshape state vector into an N-dimensional tensor. (q_{n-1}, q_{n-2}, ..., q_0)
-            tensor_state = state.reshape([2] * n)
-
-            # map qubit indices to tensor axes. 'i' maps to tensor axis 'n - 1 - i'.
-            target_axes = [n - 1 - q_idx for q_idx in self.targets]
-
-            # define new axis: target qubit axes first, then the rest
-            all_axes = list(range(n))
-            axes_permuted = target_axes + [a for a in all_axes if a not in target_axes]
-
-            # apply forward permutation to bring targets to the front (axes 0 to k-1)
-            tensor_state = np.transpose(tensor_state, axes_permuted)
-
-            # reshape state tensor for matrix multiplication by gate (2^k, 2^(n-k))
-            dims_other = tensor_state.shape[k:]
-            tensor_state = tensor_state.reshape(2 ** k, -1)
-
-            # apply the gate matrix
-            tensor_state = self.matrix @ tensor_state
-
-            # reshape back to original tensor shape
-            tensor_state = tensor_state.reshape([2] * k + list(dims_other))
-
-            # inverse qubit permutation
-            axes_original = np.argsort(axes_permuted)
-            tensor_state = np.transpose(tensor_state, axes_original)
-
-            # flatten and update the quantum state
-            quantum_state.state = tensor_state.reshape(-1)
-            return
-
+        # Method Selection
+        if method == 'tensor':
+            new_state = self._apply_tensor(state, n, k)
+        elif method == 'bitmask':
+            new_state = self._apply_bitmask(state, n, k)
         else:
-            raise ValueError("Gate targets list is empty.")
+            raise ValueError(f"Unknown method '{method}'. Choose 'tensor' or 'bitmask'.")
 
-
+        # Update State
+        quantum_state.state = new_state
 
     # -------------------------------------
-    #           Helper Methods
+    #        Static Helper Methods
     # -------------------------------------
 
     @staticmethod

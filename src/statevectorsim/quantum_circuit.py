@@ -40,24 +40,24 @@ class QuantumCircuit:
         else:
             self.gates.append(gate)
 
-    def run(self, quantum_state, inverse=False):
+    def run(self, quantum_state, inverse:bool=False, method: str = 'tensor') -> QuantumState:
         """ Apply quantum gates to state in order """
 
         # forward
         if not inverse:
             for gate in self.gates:
-                gate.apply(quantum_state)
+                gate.apply(quantum_state, method=method)
 
         # inverse
         else:
             # Apply the inverse sequence of gates (order reversed)
             for gate in reversed(self.gates):
                 # We assume the gate itself handles the inverse application if needed
-                gate.apply(quantum_state)
+                gate.apply(quantum_state, method=method)
 
         return quantum_state
 
-    def simulate(self, initial_state: QuantumState, shots: int = 1024) -> dict[str, int]:
+    def simulate(self, initial_state: QuantumState, shots: int = 1024, method: str = 'tensor') -> dict[str, int]:
         """
         Runs the circuit multiple times and returns a dictionary of measurement outcomes.
         """
@@ -71,7 +71,7 @@ class QuantumCircuit:
             current_state = initial_state.copy()
 
             # run circuit
-            self.run(current_state)
+            self.run(current_state, method=method)
 
             # measure all qubits
             # Assuming 'measure_all' is a method on QuantumState that returns a list of bits
