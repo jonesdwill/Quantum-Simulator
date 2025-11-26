@@ -372,7 +372,6 @@ class QuantumGate:
 
         return QuantumGate._create_controlled_gate(control, target, matrix, f'cry({theta})')
 
-
     @staticmethod
     def crz(control: int, target: int, theta: float) -> 'QuantumGate':
         """Controlled-Rz gate Rz(theta)."""

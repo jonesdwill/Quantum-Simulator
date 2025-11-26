@@ -3,6 +3,7 @@ import math
 from typing import List
 from .quantum_state import QuantumState
 from .quantum_gate import QuantumGate
+from typing import Union
 
 
 class QuantumCircuit:
@@ -21,14 +22,18 @@ class QuantumCircuit:
         new_qc.gates = list(self.gates)
         return new_qc
 
-    def add_gate(self, gate):
+    def add_gate(self, gate: Union[QuantumGate, 'QuantumCircuit', List[QuantumGate]]):
         """
-        Add a single QuantumGate or a list/tuple of QuantumGate objects to circuit.
-        e.g. qc.add_gate(QuantumGate.h([0, 1, 2]))
+        Add a single QuantumGate, a list/tuple of QuantumGate objects, or
+        all gates from another QuantumCircuit instance to the current circuit.
         """
 
+        # QuantumCircuit instance
+        if isinstance(gate, QuantumCircuit):
+            self.gates.extend(gate.gates)
+
         # list of gates
-        if isinstance(gate, list) or isinstance(gate, tuple):
+        elif isinstance(gate, list) or isinstance(gate, tuple):
             self.gates.extend(gate)
 
         # single gate
@@ -303,7 +308,6 @@ class QuantumCircuit:
             if binary_marked[n_qubits - 1 - q] == '0':
                 _qc.add_gate(QuantumGate.x(q))
 
-
     @staticmethod
     def grover_search(n_qubits: int, marked_state_index: int) -> 'QuantumCircuit':
         """
@@ -340,3 +344,51 @@ class QuantumCircuit:
             QuantumCircuit.grover_diffuser(_qc, n_qubits)
 
         return _qc
+
+    # ---------------------------------------------------------
+    #                     Quantum Adder
+    # ---------------------------------------------------------
+
+
+    @staticmethod
+    def qft_adder(n_qubits: int) -> 'QuantumCircuit':
+        """
+        QFT-based adder. Perform |B>|A> → |B + A mod 2^n>|A>.
+          - A : qubits 0 .. n-1   (LSB..MSB)
+          - B : qubits n .. 2n-1  (LSB..MSB)
+        """
+        if n_qubits < 1:
+            raise ValueError("n must be >= 1")
+
+        total = 2 * n_qubits
+        qc = QuantumCircuit(total)
+
+        # Indices
+        A = list(range(0, n_qubits))  # A: 0..n-1 (LSB..MSB)
+        B = list(range(n_qubits, 2 * n_qubits))  # B: n..2n-1 (LSB..MSB)
+
+        # Helper: shift gates in a subcircuit by an index offset
+        def append_shifted(sub_qc: 'QuantumCircuit', offset: int, target_qc: 'QuantumCircuit'):
+            for g in sub_qc.gates:
+                new_targets = [t + offset for t in g.targets]
+                new_matrix = np.array(g.matrix, copy=True)
+                target_qc.add_gate(QuantumGate(new_matrix, new_targets, g.name))
+
+        # --- QFT on B. Shift its targets by +n ---
+        qft_on_n = QuantumCircuit.qft(n_qubits, swap_endian=False, inverse=False)
+        append_shifted(qft_on_n, offset=n_qubits, target_qc=qc)
+
+        # --- CRP each A & B ---
+        for i in range(n_qubits):  # 0 = LSB
+            control = A[i]
+            for j in range(i, n_qubits):  # only j >= i for non-duplicity
+                target = B[j]
+                k = j - i + 1
+                theta = 2 * np.pi / (2 ** k)
+                qc.add_gate(QuantumGate.crp(control, target, theta))
+
+        # --- inverse QFT on B. shift back -n ---
+        iqft_on_n = QuantumCircuit.qft(n_qubits, swap_endian=False, inverse=True)
+        append_shifted(iqft_on_n, offset=n_qubits, target_qc=qc)
+
+        return qc

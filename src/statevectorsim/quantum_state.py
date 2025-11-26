@@ -18,7 +18,6 @@ class QuantumState:
     def get_probabilities(self):
         return np.abs(self.state) ** 2
 
-
     def copy(self) -> 'QuantumState':
         """ Copy state for multi-shot runs. """
         new_state = self.__class__(self.n)
@@ -52,7 +51,6 @@ class QuantumState:
         self.state /= np.linalg.norm(self.state)
 
         return outcome
-
 
     def measure_all(self):
         """Measure all qubits in computational basis."""
