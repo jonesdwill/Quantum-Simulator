@@ -40,7 +40,7 @@ class QuantumCircuit:
         else:
             self.gates.append(gate)
 
-    def run(self, quantum_state, inverse:bool=False, method: str = 'tensor') -> QuantumState:
+    def run(self, quantum_state, inverse:bool=False, method: str = 'dense') -> QuantumState:
         """ Apply quantum gates to state in order """
 
         # forward
@@ -57,7 +57,7 @@ class QuantumCircuit:
 
         return quantum_state
 
-    def simulate(self, initial_state: QuantumState, shots: int = 1024, method: str = 'tensor') -> dict[str, int]:
+    def simulate(self, initial_state: QuantumState, shots: int = 1024, method: str = 'dense') -> dict[str, int]:
         """
         Runs the circuit multiple times and returns a dictionary of measurement outcomes.
         """
@@ -84,6 +84,125 @@ class QuantumCircuit:
             results[outcome_str] = results.get(outcome_str, 0) + 1
 
         return results
+
+    # =========================================================
+    #                      Optimiser!
+    # =========================================================
+
+    def _reorder_gates(self):
+        """ Bubble-sort gates to improve locality (group by target qubit). """
+        if len(self.gates) < 3: return
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(self.gates) - 1):
+                g1 = self.gates[i]
+                g2 = self.gates[i + 1]
+                q1 = set(g1.targets) | set(g1.controls)
+                q2 = set(g2.targets) | set(g2.controls)
+                if not q1.isdisjoint(q2): continue
+
+                t1 = min(g1.targets) if g1.targets else 999
+                t2 = min(g2.targets) if g2.targets else 999
+                if t2 < t1:
+                    self.gates[i], self.gates[i + 1] = self.gates[i + 1], self.gates[i]
+                    changed = True
+
+    def _fuse_gates(self, gate1: QuantumGate, gate2: QuantumGate) -> QuantumGate:
+        """
+        Fuses two overlapping gates into a single larger gate using a mini quantum simulation.
+        Example: GateA(0,1) + GateB(1,2) -> Merged(0,1,2)
+        """
+
+        # Identify union of all involved qubits
+        qubits1 = set(gate1.targets) | set(gate1.controls)
+        qubits2 = set(gate2.targets) | set(gate2.controls)
+        all_qubits = sorted(list(qubits1 | qubits2))
+
+        # Map global qubit indices to local indices (0, 1, 2...)
+        global_to_local = {q: i for i, q in enumerate(all_qubits)}
+        n_local = len(all_qubits)
+        dim = 2 ** n_local
+
+        # Create local versions of the gates
+        def to_local(g):
+            loc_t = [global_to_local[t] for t in g.targets]
+            loc_c = [global_to_local[c] for c in g.controls]
+            return QuantumGate(g.matrix, loc_t, loc_c)
+
+        loc_g1 = to_local(gate1)
+        loc_g2 = to_local(gate2)
+
+        # Use the simulator to build the unitary
+        fused_matrix = np.zeros((dim, dim), dtype=complex)
+
+        # Re-use a single state object for performance
+        temp_state = QuantumState(n_local, mode='dense')
+
+        for col in range(dim):
+            # Reset state to basis vector |col>
+            temp_state.state[:] = 0.0
+            temp_state.state[col] = 1.0
+
+            # Apply gates in order
+            loc_g1.apply(temp_state, method='dense')
+            loc_g2.apply(temp_state, method='dense')
+
+            # resulting state is the column of new matrix
+            fused_matrix[:, col] = temp_state.state
+
+        # Create the new merged gate
+        new_name = f"{gate1.name}+{gate2.name}"
+        if len(new_name) > 20: new_name = "Fused"
+
+        return QuantumGate(fused_matrix, targets=all_qubits, controls=[], name=new_name)
+
+    def optimise(self, max_fusion_size: int = 4):
+        """
+        Optimizes the circuit by reordering and FUSING gates. Gates are generally pretty small, only affecting one or two qubits,
+         so by running sub-simulations on a small state space to fuse gates we keep number of gate applications on 2^n state space smaller
+
+        Args:
+            max_fusion_size: Maximum number of qubits a fused gate can touch (3-5 recommended or sub-simulation inefficient).
+        """
+
+        if len(self.gates) < 2: return
+
+        self._reorder_gates()
+
+        new_gates = []
+        pending_gates = list(self.gates)
+
+        while pending_gates:
+            current_gate = pending_gates.pop(0)
+
+            i = 0
+            while i < len(pending_gates):
+                candidate_gate = pending_gates[i]
+
+                q1 = set(current_gate.targets) | set(current_gate.controls)
+                q2 = set(candidate_gate.targets) | set(candidate_gate.controls)
+                union_qubits = q1 | q2
+
+                # size constraint
+                if len(union_qubits) <= max_fusion_size:
+                    current_gate = self._fuse_gates(current_gate, candidate_gate)
+
+                    # Remove candidate and continue optimizing
+                    pending_gates.pop(i)
+                    continue
+
+                # commute past this candidate?
+                if not q1.isdisjoint(q2):
+                    break
+
+                # If disjoint, skip this candidate and try to merge with the next one
+                i += 1
+
+            new_gates.append(current_gate)
+
+        self.gates = new_gates
+
 
     # ---------------------------------------------------------
     #           Entanglement Circuits (Bell & GHZ)
@@ -371,8 +490,9 @@ class QuantumCircuit:
         def append_shifted(sub_qc: 'QuantumCircuit', offset: int, target_qc: 'QuantumCircuit'):
             for g in sub_qc.gates:
                 new_targets = [t + offset for t in g.targets]
+                new_controls = [c + offset for c in g.controls]
                 new_matrix = np.array(g.matrix, copy=True)
-                target_qc.add_gate(QuantumGate(new_matrix, new_targets, g.name))
+                target_qc.add_gate(QuantumGate(new_matrix, new_targets, new_controls, g.name))
 
         # --- QFT on B. Shift its targets by +n ---
         qft_on_n = QuantumCircuit.qft(n_qubits, swap_endian=False, inverse=False)

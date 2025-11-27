@@ -2,11 +2,38 @@ import numpy as np
 import math
 from typing import Union, List, Dict
 from .quantum_state import QuantumState
-from scipy.sparse import csr_matrix, identity, block_diag, kron, isspmatrix_csr
+from scipy.sparse import csr_matrix, identity, block_diag, kron, isspmatrix_csr, lil_matrix
+
+
+def _generate_permutation_matrix(n: int, current_order: List[int], target_order: List[int]) -> csr_matrix:
+    if current_order == target_order:
+        return identity(2 ** n, dtype=complex, format='csr')
+
+    dim = 2 ** n
+    lil = lil_matrix((dim, dim), dtype=complex)
+
+    for old_idx in range(dim):
+        new_idx = 0
+
+        # Iterate over the sequential positions in the new basis (j = 0, 1, ..., N-1)
+        for j in range(n):
+            # The qubit that occupies the j-th bit in the new index is target_order[j]
+            q_orig_idx = target_order[j]
+
+            # Check the state of the original qubit (bit q_orig_idx in old_idx)
+            if (old_idx >> q_orig_idx) & 1:
+                # If the qubit is |1>, set the bit corresponding to the new position 'j'
+                new_idx |= (1 << j)
+
+        lil[new_idx, old_idx] = 1.0
+
+    return lil.tocsr()
+
 
 class QuantumGate:
-    def __init__(self, matrix: np.ndarray, targets: list[int], name: str = 'CustomGate'):
-        # robust check
+    def __init__(self, matrix: np.ndarray, targets: list[int], controls: list[int] = None, name: str = 'CustomGate'):
+
+        # robust check: matrix dimension is only checked against targets
         expected_dim = 2 ** len(targets)
         if matrix.shape != (expected_dim, expected_dim):
             raise ValueError(
@@ -18,12 +45,18 @@ class QuantumGate:
         self.name = name
         self.matrix = matrix
         self.targets = [int(t) for t in targets]
+        self.controls = [int(c) for c in (controls or [])]
+
+        # Check for overlaps
+        if set(targets) & set(self.controls):
+            raise ValueError("Target and control qubits must be distinct.")
 
     def __str__(self):
         """String representation of the QuantumGate."""
-        n_qubits = len(self.targets)
+        n_qubits = len(self.targets) + len(self.controls)
         targets_str = ", ".join(map(str, self.targets))
-        return f"{n_qubits}-Qubit {self.name} Gate on Qubits [{targets_str}]"
+        controls_str = f" Controls: [{', '.join(map(str, self.controls))}]" if self.controls else ""
+        return f"{n_qubits}-Qubit {self.name} Gate on Targets [{targets_str}]{controls_str}"
 
     # -------------------------------------
     #           Helper Methods
@@ -35,13 +68,8 @@ class QuantumGate:
         if isinstance(targets, int):
             targets = [targets]
 
-        # returns a list of QuantumGate objects. If only one target, it's a list with one item.
-        return [QuantumGate(matrix, [t], name) for t in targets]
-
-    @staticmethod
-    def _create_controlled_gate(control: int, target: int, matrix: np.ndarray, name: str = 'CustomMultiGate') -> 'QuantumGate':
-        """Helper function to create a 2-qubit gate instance."""
-        return QuantumGate(matrix, [control, target], name)
+        # Single gates have no controls
+        return [QuantumGate(matrix, [t], controls=[], name=name) for t in targets]
 
     @staticmethod
     def _id(n_qubits: int) -> np.ndarray:
@@ -56,60 +84,37 @@ class QuantumGate:
         """
         N = n_qubits
 
-        # 1. Define Quibit Order and Permutation
+        # Qubit Order and Permutation
         active_qubits = set(self.targets) | set(self.controls)
         non_active_qubits = sorted([i for i in range(N) if i not in active_qubits])
+        new_order = sorted(self.targets) + sorted(self.controls) + non_active_qubits
 
-        # New order for efficient construction: [Non-Active, Controls, Targets]
-        new_order = non_active_qubits + sorted(self.controls) + sorted(self.targets)
         original_order = list(range(N))
 
-        # Get the Permutation Matrix P (converts original basis to new basis)
+        # Get the Permutation Matrix P
         P = _generate_permutation_matrix(N, original_order, new_order)
-        P_T = P.transpose()  # Transpose is the inverse for P
+        P_T = P.transpose().tocsr()
 
-        # 2. Build the Active Subspace Gate (G_active)
-
-        num_active = len(active_qubits)
-        dim_active = 2 ** num_active
-
+        # Build Active Subspace Gate
         if not self.controls:
-            # Non-Controlled Gate: G_active is just the gate matrix U
             G_active = csr_matrix(self.matrix)
         else:
-            # Controlled Gate: G_active = I on control=0 blocks, U on control=1 block
-
-            # The matrix U is 2^k x 2^k
             U_matrix_csr = csr_matrix(self.matrix)
             dim_k = 2 ** len(self.targets)
-
-            # The control part of the subspace (2^c x 2^c)
             dim_control = 2 ** len(self.controls)
 
-            # G_active is a block matrix of size 2^(c+k) x 2^(c+k)
-            # It's an Identity matrix everywhere except the block where ALL controls are 1
+            # Size = (2^|controls| - 1) * 2^|targets|
+            dim_i_off = (dim_control - 1) * dim_k
+            I_control_off = identity(dim_i_off, dtype=complex, format='csr')
 
-            # Create a 2^(c+k) x 2^(c+k) sparse identity matrix
-            G_active = identity(dim_active, dtype=complex, format='lil')
+            # Controls are now the MSBs of this block.
+            G_active = block_diag([I_control_off, U_matrix_csr], format='csr')
 
-            # Identify the block offset: it's the index where all controls are |1>
-            # The last block is at index 2^c - 1, starting at row/col (2^c - 1) * 2^k
-            block_start_index = (dim_control - 1) * dim_k
-
-            # Overwrite the control=|1> block with the gate matrix U
-            # The block is from [block_start_index : block_start_index + dim_k]
-            G_active[block_start_index: block_start_index + dim_k,
-            block_start_index: block_start_index + dim_k] = U_matrix_csr
-
-            G_active = G_active.tocsr()
-
-        # 3. Embed G_active into the Full Permuted Space (U')
-        # U' = I_non_active \otimes G_active
+        # Embed G_active into the Full Permuted Space ('U')
         I_non_active = identity(2 ** len(non_active_qubits), dtype=complex, format='csr')
         U_prime = kron(I_non_active, G_active, format='csr')
 
-        # 4. Revert Permutation: U = P^T * U' * P
-        # This gives the final, full, unpermuted sparse matrix.
+        # Inverse Permutation
         U_full = P_T.dot(U_prime.dot(P))
 
         return U_full.tocsr()
@@ -158,6 +163,7 @@ class QuantumGate:
     def _apply_bitmask(self, state: np.ndarray, n: int, k: int) -> np.ndarray:
         """
         Multi-qubit gate application using generalized index-based iteration (k >= 1).
+        Handles controls by conditionally applying the gate matrix.
         """
 
         gate_matrix = self.matrix
@@ -167,25 +173,33 @@ class QuantumGate:
         # Sort targets to ensure the statevector block's internal order matches the gate matrix's order.
         sorted_targets = sorted(self.targets)
 
-        # Pre-calculate the index offsets
+        # Pre-calculate the index offsets (for the target bits)
         index_offsets = np.zeros(dim_k, dtype=int)
         for m in range(dim_k):
             offset = 0
             for j, t in enumerate(sorted_targets):
-                # If the j-th bit of m is 1, add 1 << t (the state index bit) to offset
                 if (m >> j) & 1:
                     offset |= (1 << t)
             index_offsets[m] = offset
 
-        # iteration block mask. sum of all target masks. determines indices 'i' where all targets are |0>.
-        control_mask = sum(1 << t for t in self.targets)
+        # Mask of all target qubits (for finding block starts)
+        target_mask = sum(1 << t for t in self.targets)
 
-        # Iterate over the 2^(n-k) blocks
+        # Mask of all control qubits (for checking condition)
+        control_mask = sum(1 << c for c in self.controls)
+
+        # The value the control bits must be set to (all ones)
+        control_check_value = control_mask
+
         size = 1 << n
 
         for i in range(size):
-            # start iteration at the index 'i' where all target qubits are |0>
-            if i & control_mask:
+            # Identify block start: 'i' where all targets are |0>
+            if i & target_mask:
+                continue
+
+            # Control check: Skip block if controls are not all |1>
+            if self.controls and (i & control_mask) != control_check_value:
                 continue
 
             # extract the 2^k amplitudes from the statevector into a temporary block
@@ -206,82 +220,184 @@ class QuantumGate:
 
     def _apply_sparse(self, quantum_state: 'QuantumState'):
         """
-        Apply k-qubit QuantumGate using the high-performance, C based, SciPy CSR matrix
-        multiplication approach.
-
-        If the gate's definition requires a full 2^N x 2^N gate matrix,
-        this approach is efficient because the single dot product is C-accelerated.
+        Apply gate directly to the non-zero elements of sparse state vector.
+        Avoids constructing full 2^N x 2^N operator matrix.
         """
 
-        # Build full sparse matrix U_full (2^N x 2^N) for gate.
-        U_full_sparse = self._build_sparse_full_matrix(quantum_state.n)
+        # Get current sparse state data (CSR format)
+        state_csr = quantum_state.sparse_state
+        indices = state_csr.indices
+        data = state_csr.data
 
-        # Apply gate using the optimised SciPy dot product.
-        new_sparse_state = U_full_sparse.dot(quantum_state.sparse_state.transpose()).transpose().tocsr()
+        if len(indices) == 0:
+            return
 
-        # Update sparse rep and clean
-        quantum_state.sparse_state = new_sparse_state
+        n_qubits = quantum_state.n
+
+        # identify active indices
+        if self.controls:
+            control_mask = 0
+            for c in self.controls:
+                control_mask |= (1 << c)
+
+            # Check which indices have all control bits set
+            # (idx & control_mask) == control_mask
+            active_mask = (indices & control_mask) == control_mask
+        else:
+            # all indices are active if no controls
+            active_mask = np.ones(len(indices), dtype=bool)
+
+        # Split indices into active and passive
+        active_indices = indices[active_mask]
+        active_data = data[active_mask]
+
+        passive_indices = indices[~active_mask]
+        passive_data = data[~active_mask]
+
+        if len(active_indices) == 0:
+            return
+
+        # apply logic to active indices
+        target_bits = np.array(self.targets, dtype=int)
+
+        # create bit masks for targets
+        target_mask = 0
+        for t in self.targets:
+            target_mask |= (1 << t)
+
+        # local index (0..2^k-1) for the gate from the global index
+        local_indices = np.zeros(len(active_indices), dtype=int)
+        for i, t in enumerate(self.targets):
+            # Extract bit 't', shift it to position 'i'
+            bit_val = (active_indices >> t) & 1
+            local_indices |= (bit_val << i)
+
+        # base index is the global index with target bits zeroed out
+        base_indices = active_indices & (~target_mask)
+
+        # Perform the small matrix multiplication
+        gate_matrix = self.matrix
+        dim_gate = gate_matrix.shape[0]
+
+        new_rows = []
+        new_cols = []
+        new_vals = []
+
+        # For each output row of the gate matrix (possible outcome state)
+        for row_idx in range(dim_gate):
+            # Get the matrix row coefficients for the specific local indices
+            coeffs = gate_matrix[row_idx, local_indices]
+
+            # Keep only non-zero contributions
+            nz_mask = (coeffs != 0)
+            if not np.any(nz_mask):
+                continue
+
+            valid_coeffs = coeffs[nz_mask]
+            valid_data = active_data[nz_mask]
+            valid_base = base_indices[nz_mask]
+
+            # Calculate the new global indices
+            added_bits = 0
+            for i, t in enumerate(self.targets):
+                if (row_idx >> i) & 1:
+                    added_bits |= (1 << t)
+
+            final_indices = valid_base | added_bits
+
+            # Append data for COO construction
+            new_cols.append(final_indices)
+            new_vals.append(valid_data * valid_coeffs)
+
+            # Row index is always 0 for statevector
+            new_rows.append(np.zeros(len(final_indices), dtype=int))
+
+        # Reconstruct the State
+        if new_cols:
+            active_cols = np.concatenate(new_cols)
+            active_vals = np.concatenate(new_vals)
+            active_rows = np.concatenate(new_rows)
+        else:
+            active_cols = np.array([], dtype=int)
+            active_vals = np.array([], dtype=complex)
+            active_rows = np.array([], dtype=int)
+
+        # Add passive data
+        final_cols = np.concatenate([passive_indices, active_cols])
+        final_vals = np.concatenate([passive_data, active_vals])
+        final_rows = np.concatenate([np.zeros(len(passive_indices), dtype=int), active_rows])
+
+        # Create new CSR matrix
+        from scipy.sparse import coo_matrix
+        new_coo = coo_matrix((final_vals, (final_rows, final_cols)), shape=(1, quantum_state.dim), dtype=complex)
+
+        # Update state
+        quantum_state.sparse_state = new_coo.tocsr()
         quantum_state.clean_sparse()
 
-
-    def apply(self, quantum_state, method: str = 'tensor'):
+    def apply(self, quantum_state, method: str = 'dense'):
         """
         Apply k-qubit QuantumGate to an n-qubit QuantumState using the specified method.
-
-        Args:
-            quantum_state: The QuantumState object.
-            method (str): implementation strategy.
-                            - 'tensor' (NumPy reshape/transpose)
-                            - 'bitmask' (optimized index-based iteration).
         """
 
         n = quantum_state.n
         k = len(self.targets)
+        original_mode = quantum_state.mode
 
-        # Check if targets are valid (within [0, n-1])
-        if not all(0 <= t < n for t in self.targets):
+        # Check if targets/controls are valid (within [0, n-1])
+        all_qubits = self.targets + self.controls
+        if not all(0 <= t < n for t in all_qubits):
             raise ValueError(
-                f"Target qubits {self.targets} are out of bounds "
+                f"Gate qubits {all_qubits} are out of bounds "
                 f"for an {n}-qubit state."
             )
 
-        original_mode = quantum_state.mode
+        state = None
 
+        # --- Handle State Mode Conversion ---
         if original_mode == 'sparse':
-            if method in ['tensor', 'bitmask']:
-                # The user specified a dense method, so convert to dense first
+            if method == 'dense':
                 quantum_state.to_dense()
                 state = quantum_state.state.copy()
-            else:
-                # Use the new sparse implementation if the state is sparse
+            elif method == 'sparse':
                 self._apply_sparse(quantum_state)
-                # Ensure the mode is explicitly set to sparse
                 quantum_state.mode = 'sparse'
-                return  # Exit early as the state is updated
+                return
+            else:
+                raise ValueError(f"Unknown method '{method}'. Choose 'dense' or 'sparse'.")
 
-        else:  # original_mode == 'dense'
+        elif original_mode == 'dense':
+            if method == 'sparse':
+                quantum_state.to_sparse()
+                self._apply_sparse(quantum_state)
+                return
             state = quantum_state.state.copy()
 
-        # --- Dense Application ---
-        if method == 'tensor':
-            new_state = self._apply_tensor(state, n, k)
-        elif method == 'bitmask':
-            new_state = self._apply_bitmask(state, n, k)
-        elif method == 'sparse':
-            raise ValueError(
-                "Cannot use 'sparse' method on a dense QuantumState. "
-                "Ensure the QuantumState's mode is set to 'sparse' or use to_sparse() first."
-            )
-        else:
-            raise ValueError(f"Unknown method '{method}'. Choose 'tensor', 'bitmask', or 'sparse'.")
 
+        # --- Internal Dense Routing ---
+        if self.controls:
+            # Controlled gates (like CRp in QFT) require index-based conditional logic
+            internal_method = '_apply_bitmask'
+        elif k == 1:
+            # Optimization: Single-qubit gates are often simplest/fastest with tensor method
+            internal_method = '_apply_tensor'
+        else:
+            # Multi-target non-controlled gates (e.g., SWAP) also use tensor method
+            internal_method = '_apply_tensor'
+
+        if internal_method == '_apply_tensor':
+            new_state = self._apply_tensor(state, n, k)
+        else:  # internal_method == '_apply_bitmask'
+            new_state = self._apply_bitmask(state, n, k)
+
+
+        # --- Update and Restore
         # Update State
         quantum_state.state = new_state
 
         # Restore original mode if it was sparse
         if original_mode == 'sparse':
             quantum_state.to_sparse()
-
 
     # -------------------------------------
     #    Standard Gates (X, Y, Z, H, I)
@@ -351,7 +467,6 @@ class QuantumGate:
         matrix = np.array([[1, 0], [0, phase]], dtype=complex)
         return QuantumGate._create_single_gates(targets, matrix, 'tdg')
 
-
     # -------------------------------------
     #      Rotation Gates (RX, RY, RZ)
     # -------------------------------------
@@ -385,163 +500,92 @@ class QuantumGate:
         return QuantumGate._create_single_gates(targets, matrix, f'rz({theta})')
 
 
-
     # -------------------------------------
     #  Controlled Gates (CX, CY, CZ, SWAP)
     # -------------------------------------
 
     @staticmethod
     def cx(control: int, target: int):
-        """CNOT gate (2 qubits) - Control on first target, Target on second."""
-        matrix = np.array([[1, 0, 0, 0],
-                           [0, 1, 0, 0],
-                           [0, 0, 0, 1],
-                           [0, 0, 1, 0]], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix, 'cx')
+        """CNOT gate (2 qubits) - Applies Pauli-X to target if control is |1>."""
+        x_matrix = np.array([[0, 1], [1, 0]], dtype=complex)
+        return QuantumGate(x_matrix, targets=[target], controls=[control], name='cx')
 
     @staticmethod
     def cy(control: int, target: int):
-        """Controlled-y gate (2 qubits) - Applies y if both qubits are |1>"""
-        matrix = np.array([[0, -1j], [1j, 0]], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix, 'cy')
+        """Controlled-Y gate (2 qubits) - Applies Pauli-Y to target if control is |1>."""
+        y_matrix = np.array([[0, -1j], [1j, 0]], dtype=complex)
+        return QuantumGate(y_matrix, targets=[target], controls=[control], name='cy')
 
     @staticmethod
     def cz(control: int, target: int):
-        """Controlled-Z gate (2 qubits) - Applies Z if both qubits are |1>"""
-        # CZ matrix is diagonal with [1, 1, 1, -1]
-        matrix = np.diag([1, 1, 1, -1]).astype(complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix, 'cz')
+        """Controlled-Z gate (2 qubits) - Applies Pauli-Z to target if control is |1>."""
+        z_matrix = np.array([[1, 0], [0, -1]], dtype=complex)
+        return QuantumGate(z_matrix, targets=[target], controls=[control], name='cz')
 
     @staticmethod
     def swap(q1: int, q2: int):
-        """SWAP gate (2 qubits). Basis: |00>, |01>, |10>, |11>"""
+        """SWAP gate (2 qubits). A standard 2-qubit gate with NO controls."""
         matrix = np.array([[1, 0, 0, 0],
                            [0, 0, 1, 0],
                            [0, 1, 0, 0],
                            [0, 0, 0, 1]], dtype=complex)
-        return QuantumGate._create_controlled_gate(q1, q2, matrix, 'swap')  # Using the 2-qubit helper here
+        return QuantumGate(matrix, targets=[q1, q2], name='swap')
 
     @staticmethod
     def cu(control: int, target_qubits: list[int], unitary_matrix: np.ndarray, k: int = 1):
         """ Creates a Controlled-U^k gate. """
 
-        # num target qubits
         m_qubits = len(target_qubits)
-
         if unitary_matrix.shape != (2 ** m_qubits, 2 ** m_qubits):
             raise ValueError(
                 f"Unitary matrix size must be 2^m x 2^m where m is the number of target qubits ({m_qubits})."
             )
 
-        # Compute U^k
         U_k = np.linalg.matrix_power(unitary_matrix, k)
 
-        # Determine the full set of qubits involved
-        all_qubits = sorted(list(set([control] + target_qubits)))
-        n_total = len(all_qubits)
+        return QuantumGate(U_k, targets=target_qubits, controls=[control], name='cu')
 
-        # Identity matrix for the target register
-        I_target = QuantumGate._id(m_qubits)
-
-        # Construct the Controlled-U matrix (C-U) in the computational basis:
-        # projection operators:
-        P0 = np.array([[1, 0], [0, 0]], dtype=complex)
-        P1 = np.array([[0, 0], [0, 1]], dtype=complex)
-
-        # tensor product P0 I_target
-        P0_I = np.kron(P0, I_target)
-
-        # tensor product P1 U^k
-        P1_U = np.kron(P1, U_k)
-
-        # Full C-U matrix (before permutation/re-indexing)
-        CU_matrix_unpermuted = P0_I + P1_U
-
-        # The indices for the QuantumGate object must be all qubits involved.
-        gate_qubits = [control] + target_qubits
-
-        return QuantumGate(CU_matrix_unpermuted, gate_qubits)
-
-    # ----------------------------------------------
-    #    Controlled Rotation Gates (CRX, CRY, CRZ)
-    # ----------------------------------------------
+    # ---------------------------------------------------
+    #    Controlled Rotation Gates (CRX, CRY, CRZ, CRP)
+    # ---------------------------------------------------
 
     @staticmethod
     def crx(control: int, target: int, theta: float) -> 'QuantumGate':
-        """
-        Controlled-Rx gate.
-        Applies Rx(theta) to the target qubit if the control qubit is |1>.
-
-        The 4x4 matrix assumes targets are [control, target] (basis |00>, |01>, |10>, |11>).
-        """
+        """Controlled-Rx gate."""
         half_theta = theta / 2.0
         c = math.cos(half_theta)
         s = math.sin(half_theta)
-
-        # Identity block for control=0 (top-left 2x2)
-        # R_x(theta) block for control=1 (bottom-right 2x2)
-        matrix = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, c, -1j * s],
-            [0, 0, -1j * s, c]
-        ], dtype=complex)
-
-        return QuantumGate._create_controlled_gate(control, target, matrix, f'crx({theta})')
+        # Rx(theta) matrix
+        matrix = np.array([[c, -1j * s], [-1j * s, c]], dtype=complex)
+        return QuantumGate(matrix, targets=[target], controls=[control], name=f'crx({theta})')
 
     @staticmethod
     def cry(control: int, target: int, theta: float) -> 'QuantumGate':
-        """
-        Controlled-Ry gate.
-        Applies Ry(theta) to the target qubit if the control qubit is |1>.
-
-        The 4x4 matrix assumes targets are [control, target] (basis |00>, |01>, |10>, |11>).
-        """
+        """Controlled-Ry gate."""
         half_theta = theta / 2.0
         c = math.cos(half_theta)
         s = math.sin(half_theta)
-
-        # Identity block for control=0
-        # R_y(theta) block for control=1
-        matrix = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, c, -s],
-            [0, 0, s, c]
-        ], dtype=complex)
-
-        return QuantumGate._create_controlled_gate(control, target, matrix, f'cry({theta})')
+        # Ry(theta) matrix
+        matrix = np.array([[c, -s], [s, c]], dtype=complex)
+        return QuantumGate(matrix, targets=[target], controls=[control], name=f'cry({theta})')
 
     @staticmethod
     def crz(control: int, target: int, theta: float) -> 'QuantumGate':
-        """Controlled-Rz gate Rz(theta)."""
+        """Controlled-Rz gate."""
         half_theta = theta / 2.0
         e_neg = np.exp(-1j * half_theta)
         e_pos = np.exp(1j * half_theta)
-        matrix = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, e_neg, 0],
-            [0, 0, 0, e_pos]
-        ], dtype=complex)
-        return QuantumGate._create_controlled_gate(control, target, matrix, f'crz({theta})')
+        # Rz(theta) matrix
+        matrix = np.array([[e_neg, 0], [0, e_pos]], dtype=complex)
+        return QuantumGate(matrix, targets=[target], controls=[control], name=f'crz({theta})')
 
     @staticmethod
     def crp(control: int, target: int, theta: float):
-        """ Controlled Phase Gate (CRP or CP(theta)).
-        Applies a phase shift of exp(i*theta) to the |11> component.
-        """
-
-        # control and target are already type-hinted as int
-        if control == target:
-            raise ValueError("Control and target qubits must be distinct.")
-
-        # The matrix is defined for sorted indices |00>, |01>, |10>, |11>
-        matrix = np.eye(4, dtype=complex)
-        matrix[3, 3] = np.exp(1j * theta)
-
-        return QuantumGate._create_controlled_gate(control, target, matrix, f'crp({theta})')
-
+        """ Controlled Phase Gate (CRP or CP(theta)). """
+        phase = np.exp(1j * theta)
+        # P(theta) matrix
+        matrix = np.array([[1, 0], [0, phase]], dtype=complex)
+        return QuantumGate(matrix, targets=[target], controls=[control], name=f'crp({theta})')
 
     # -----------------------------------------
     #   Multi-Controlled Gates (MCX, MCY, MCZ)
@@ -550,68 +594,26 @@ class QuantumGate:
     @staticmethod
     def mcx(controls: List[int], target: int):
         """ Multi-Controlled X (MCX) or N-Controlled NOT gate. """
-
-        all_targets = controls + [target]
-        n_qubits = len(all_targets)
-
-        if n_qubits < 2:
-            raise ValueError("MCX requires at least one control and one target qubit.")
-
-        dim = 2 ** n_qubits
-        matrix = np.eye(dim, dtype=complex)
-
-        # The bottom-right 2x2 block corresponds to all controls = 1.
-        index_0 = dim - 2  # index of |11...10>
-        index_1 = dim - 1  # index of |11...11>
-
-        # apply the Pauli-X matrix to the block, effectively swapping the two states
-        matrix[index_0, index_0] = 0
-        matrix[index_0, index_1] = 1
-        matrix[index_1, index_0] = 1
-        matrix[index_1, index_1] = 0
-
-        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcx')
+        if not controls:
+            raise ValueError("MCX requires at least one control qubit.")
+        x_matrix = np.array([[0, 1], [1, 0]], dtype=complex)  # 2x2 unitary
+        n_qubits = len(controls) + 1
+        return QuantumGate(x_matrix, targets=[target], controls=controls, name=f'{n_qubits}-control mcx')
 
     @staticmethod
     def mcy(controls: List[int], target: int):
         """ Multi-Controlled Y (MCY) gate. """
-        all_targets = controls + [target]
-        n_qubits = len(all_targets)
-
-        if n_qubits < 2:
-            raise ValueError("MCY requires at least one control and one target qubit.")
-
-        dim = 2 ** n_qubits
-        matrix = np.eye(dim, dtype=complex)
-
-        # The index block corresponding to all controls = 1.
-        index_0 = dim - 2  # index of |11...10>
-        index_1 = dim - 1  # index of |11...11>
-
-        # apply Pauli-Y matrix
-        matrix[index_0, index_0] = 0
-        matrix[index_0, index_1] = -1j
-        matrix[index_1, index_0] = 1j
-        matrix[index_1, index_1] = 0
-
-        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcy')
+        if not controls:
+            raise ValueError("MCY requires at least one control qubit.")
+        y_matrix = np.array([[0, -1j], [1j, 0]], dtype=complex)  # 2x2 unitary
+        n_qubits = len(controls) + 1
+        return QuantumGate(y_matrix, targets=[target], controls=controls, name=f'{n_qubits}-control mcy')
 
     @staticmethod
     def mcz(controls: List[int], target: int):
         """ Multi-Controlled Z (MCZ) gate. """
-        all_targets = controls + [target]
-        n_qubits = len(all_targets)
-
-        if n_qubits < 2:
-            raise ValueError("MCZ requires at least one control and one target qubit.")
-
-        dim = 2 ** n_qubits
-        matrix = np.eye(dim, dtype=complex)
-
-        # index corresponding to all qubits being |1> is the last index
-        index_all_ones = dim - 1  # index of |11..11>
-
-        # apply a phase flip (-1) only when all inputs are 1
-        matrix[index_all_ones, index_all_ones] = -1
-
-        return QuantumGate(matrix, all_targets, f'{n_qubits}-control mcz')
+        if not controls:
+            raise ValueError("MCZ requires at least one control qubit.")
+        z_matrix = np.array([[1, 0], [0, -1]], dtype=complex)  # 2x2 unitary
+        n_qubits = len(controls) + 1
+        return QuantumGate(z_matrix, targets=[target], controls=controls, name=f'{n_qubits}-control mcz')

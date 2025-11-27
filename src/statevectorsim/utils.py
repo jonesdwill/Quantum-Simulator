@@ -24,7 +24,6 @@ def single_qubit_bloch_vector(state, qubit_index):
 
     return vec
 
-
 def plot_bloch_spheres(state, fig_size=(4, 4), max_cols=4):
     """
     Bloch sphere plot for multi-qubit state, given a statevector. Plots multiple bloch spheres.
@@ -148,7 +147,6 @@ def plot_bloch_spheres(state, fig_size=(4, 4), max_cols=4):
     plt.tight_layout()
     plt.show()
 
-
 def statevector_to_dataframe(state: np.ndarray, little_endian=True):
     """ Convert a statevector to a pandas DataFrame. Little-endian (default). """
 
@@ -176,7 +174,6 @@ def statevector_to_dataframe(state: np.ndarray, little_endian=True):
     })
 
     return df
-
 
 def plot_histogram(results: Dict[str, int], shots: int):
     """ Generates probability histogram from multi-shot measurement results. """
@@ -215,7 +212,6 @@ def plot_histogram(results: Dict[str, int], shots: int):
 
     plt.show()
 
-
 def format_statevector(state: np.ndarray) -> str:
     """
     Formats the complex state vector into a readable string representation
@@ -238,13 +234,10 @@ def format_statevector(state: np.ndarray) -> str:
 
     return "\n".join(output)
 
-
 def _group_simultaneous_gates(gates: list) -> List[Union[list, object]]:
     """
     Groups consecutive single-qubit gates that target disjoint qubits
-    into a single list (representing a column of gates). Multi-qubit gates
-    remain as individual gate objects. This is a pre-processing step for
-    circuit_to_ascii.
+    into a single list (representing a column of gates).
     """
     if not gates:
         return []
@@ -254,13 +247,10 @@ def _group_simultaneous_gates(gates: list) -> List[Union[list, object]]:
     while i < len(gates):
         current_gate = gates[i]
 
-        is_single_qubit = len(current_gate.targets) == 1 and current_gate.name.lower() not in ['cx', 'cy', 'cz', 'swap']
+        # A gate is groupable if it has exactly one target and NO controls.
+        is_groupable_single_qubit = len(current_gate.targets) == 1 and not current_gate.controls
 
-        gate_name = current_gate.name.split(' ')[0].upper()
-        is_controlled = gate_name in ['CX', 'CY', 'CZ', 'CS', 'CRX', 'CRY', 'CRZ', 'CCX', 'MCX', 'MCY', 'MCZ']
-        is_swap = gate_name == 'SWAP'
-
-        if len(current_gate.targets) == 1 and not is_controlled and not is_swap:
+        if is_groupable_single_qubit:
             group = [current_gate]
             used_qubits = set(current_gate.targets)
             j = i + 1
@@ -268,13 +258,11 @@ def _group_simultaneous_gates(gates: list) -> List[Union[list, object]]:
             # Look ahead for simultaneous single-qubit gates
             while j < len(gates):
                 next_gate = gates[j]
-                next_gate_name = next_gate.name.split(' ')[0].upper()
-                next_is_controlled = next_gate_name in ['CX', 'CY', 'CZ', 'CS', 'CRX', 'CRY', 'CRZ', 'CCX', 'MCX',
-                                                        'MCY', 'MCZ']
-                next_is_swap = next_gate_name == 'SWAP'
 
-                # Must be a single-qubit gate
-                if len(next_gate.targets) == 1 and not next_is_controlled and not next_is_swap:
+                # Check if the next gate is also a groupable single-qubit gate.
+                next_is_groupable_single_qubit = len(next_gate.targets) == 1 and not next_gate.controls
+
+                if next_is_groupable_single_qubit:
                     next_qubit = next_gate.targets[0]
                     # Must operate on a disjoint qubit
                     if next_qubit not in used_qubits:
@@ -284,114 +272,82 @@ def _group_simultaneous_gates(gates: list) -> List[Union[list, object]]:
                     else:
                         break  # Qubit clash, stop grouping
                 else:
-                    break  # Multi-qubit gate or different single-qubit gate, stop grouping
+                    break  # Multi-qubit gate or non-groupable single-qubit gate, stop grouping
 
             processed_steps.append(group)
             i = j
         else:
-            # Multi-qubit gate, cannot be grouped (treated as a group of one)
+            # Multi-qubit gate or non-groupable single-qubit gate, cannot be grouped
             processed_steps.append(current_gate)
             i += 1
 
     return processed_steps
 
-
 def circuit_to_ascii(circuit: 'QuantumCircuit', initial_state_label: str = '|0>') -> str:
     """
     Generates an ASCII/text representation of the quantum circuit.
+    (Only the body of the function is shown for brevity)
     """
     n_qubits = circuit.n
     if n_qubits == 0:
         return "Empty circuit."
 
-    # Initialize the circuit diagram structure: a list of strings, one for each qubit.
     label_width = len(f"q{n_qubits - 1}: {initial_state_label}")
     lines = [f"q{i}: {initial_state_label}".ljust(label_width) + "---" for i in range(n_qubits)]
-
-    # Starting point after the initial label
     initial_offset = label_width + 3
-
     qubit_last_gate_end = [initial_offset] * n_qubits
+    GATE_TOTAL_WIDTH = 3
 
-    # --- Configuration for Gate Display ---
-    GATE_TOTAL_WIDTH = 3  # Kept at 3 as requested
-
-    # Pre-process: Group simultaneous single-qubit gates into a single column
     processed_steps = _group_simultaneous_gates(circuit.gates)
 
     for step in processed_steps:
-
-        # Normalize step to a list of gates (even if it's a single multi-qubit gate)
         gates_in_step = step if isinstance(step, list) else [step]
-
-        # Dictionary to hold the ASCII segment that needs to be drawn for each qubit in this column
         step_draw_info = {}
         all_involved_qubits = set()
 
-        # First Pass: Collect all drawing instructions and involved qubits for the entire column/step
         for gate in gates_in_step:
-
             gate_name = gate.name.split(' ')[0].upper()
-
-            # Clean up rotation gates (e.g., 'RZ(0.785)' -> 'RZ')
             if gate_name.startswith('R') and '(' in gate_name:
                 display_name = gate_name.split('(')[0]
             else:
                 display_name = gate_name
-
-            # Truncate
             display_name = display_name[:3]
 
-            # Identify Control and Target Qubits
-            target_qubits = gate.targets
+            all_involved_qubits.update(gate.targets)
+            all_involved_qubits.update(gate.controls)
 
-            control_qubits = []
-            active_target = None
-
-            # all but the last target are controls
-            if display_name in ['CX', 'CY', 'CZ', 'CS', 'CRX', 'CRY', 'CRZ', 'CCX', 'MCX', 'MCY', 'MCZ']:
-                if len(target_qubits) >= 2:
-                    control_qubits = sorted(target_qubits[:-1])
-                    active_target = target_qubits[-1]
-                elif len(target_qubits) == 1:
-                    active_target = target_qubits[0]
-            else:
-                # all targets are active targets (for single-qubit/SWAP)
-                # Since single-qubit gates are grouped, the target will be set here.
-                if target_qubits:
-                    # For single-qubit gates, there's one target. For SWAP, both targets are active targets.
-                    active_target = target_qubits[0]
-
-                    # Add all controls and targets to the set of involved qubits for padding calculation
-            all_involved_qubits.update(target_qubits)
-            all_involved_qubits.update(control_qubits)
-
-            # Record drawing for controls
-            for q in control_qubits:
+            # Record drawing for controls (Dot: -*-, Padded to 3 chars)
+            for q in gate.controls:
                 step_draw_info[q] = "-*-"
 
-            # Record drawing for active target / main gate box
-            if active_target is not None:
-                is_cnot_target = display_name in ['CX', 'CY', 'CZ', 'CCX', 'MCX', 'MCY', 'MCZ']
-                is_swap_target = display_name == 'SWAP'
+            # Record drawing for targets (Box/X)
+            for q in gate.targets:
+                if q in step_draw_info: continue
 
-                if active_target not in step_draw_info:
-                    if is_cnot_target or is_swap_target:
-                        # Target (X) for CNOT/Toffoli/etc. or SWAP cross, padded to 3 chars: -X-
-                        step_draw_info[active_target] = "-X-"
-                    else:
-                        box_content = display_name.center(3)
-                        step_draw_info[active_target] = box_content  # e.g. ' H ' or 'RZ '
+                is_swap = gate_name == 'SWAP'
+                # Use 'X' for CNOT/MCX targets, a box for all others (H, RZ, CZ, etc.)
+                is_cnot_or_toffoli = gate_name in ['CX', 'CCX', 'MCX']
 
-            # Record vertical connectors (only for multi-qubit gates)
-            if len(gate.targets) > 1 or len(control_qubits) > 0:
-                min_qubit_span = min(all_involved_qubits)
-                max_qubit_span = max(all_involved_qubits)
+                if is_swap or is_cnot_or_toffoli:
+                    # Targets of SWAP and CNOT/MCX get an 'X'
+                    step_draw_info[q] = "-X-"
+                else:
+                    # All other targets (H, RZ, CY, CZ, CRZ, CU) get a box with the name
+                    box_content = display_name.center(3)
+                    step_draw_info[q] = box_content
+
+            # Record vertical connectors for spanned, non-involved qubits (e.g., between controls)
+            if len(all_involved_qubits) > 1:
+                min_qubit_span = min(gate.targets + gate.controls) if (gate.targets or gate.controls) else -1
+                max_qubit_span = max(gate.targets + gate.controls) if (gate.targets or gate.controls) else -1
+
+                # Iterate over the full span
                 for q in range(min_qubit_span, max_qubit_span + 1):
-                    if q in all_involved_qubits and q not in step_draw_info:
+                    # Draw connector only if it's within the span and not already a control or target
+                    if q not in step_draw_info:
                         step_draw_info[q] = "-|-"
 
-        if not all_involved_qubits: continue  # Skip if no targets/controls
+        if not all_involved_qubits: continue
 
         min_qubit = min(all_involved_qubits)
         max_qubit = max(all_involved_qubits)
@@ -400,30 +356,24 @@ def circuit_to_ascii(circuit: 'QuantumCircuit', initial_state_label: str = '|0>'
 
         # --- Draw Gate/Step ---
         for q in range(n_qubits):
-
             padding = start_col - len(lines[q])
             if padding > 0:
                 lines[q] += "-" * padding
 
             drawn_segment = ""
 
-            # Check if a specific gate part was identified for this qubit in this column
+            # Check if a specific gate part was identified
             if q in step_draw_info:
                 drawn_segment = step_draw_info[q]
 
             elif min_qubit <= q <= max_qubit and not drawn_segment:
-                # Vertical connector line, padded to 3 chars: -|-
-                drawn_segment = "-|-"
+                drawn_segment = "-|-"  # Fallback/intermediate connector for multi-qubit gates
 
+            # Wire for non-involved qubits
             else:
-                # Wire for non-involved qubits
                 drawn_segment = "-" * GATE_TOTAL_WIDTH
 
             lines[q] += drawn_segment
-
-            # 5. Update Column Tracking
-            # The next gate starts after the current gate block, which is GATE_TOTAL_WIDTH long.
             qubit_last_gate_end[q] = start_col + GATE_TOTAL_WIDTH
 
-    # Combine all lines into the final output string
     return "\n".join(lines)

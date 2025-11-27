@@ -1,8 +1,9 @@
 import math
 import numpy as np
 from statevectorsim import QuantumState, QuantumCircuit, QuantumGate
+from statevectorsim.quantum_noise import QuantumChannel, NoiseModel
 from statevectorsim.utils import plot_bloch_spheres, format_statevector, circuit_to_ascii
-from numpy import testing
+from statevectorsim.utils import plot_histogram
 
 # ==============================================================================
 #                      Testing Utility Functions
@@ -242,7 +243,7 @@ def test_qft_decomposition(n_qubits: int, initial_index: int):
     qft_circuit = QuantumCircuit.qft(n_qubits, swap_endian=True)
 
     # Run the circuit
-    final_state = qft_circuit.run(initial_state)
+    final_state = qft_circuit.run(initial_state, method='sparse')
 
     print(circuit_to_ascii(qft_circuit))
 
@@ -349,6 +350,7 @@ def test_qpe_t_gate():
     T_matrix = np.array([[1, 0], [0, np.exp(1j * np.pi / 4)]], dtype=complex)
 
     target_qubit_index = t_qubits
+    # Prepare target |1> state using X gate (since target is initialized to |0>)
     target_prep_gates = [QuantumGate.x(target_qubit_index)]
     target_val = 1  # |1> state
 
@@ -358,8 +360,7 @@ def test_qpe_t_gate():
 
     initial_state = QuantumState(qpe_circuit.n)
     print(f"Applying {len(qpe_circuit.gates)} Gates to {qpe_circuit.n}-qubit state...")
-    initial_state.state[2 ** t_qubits] = 1.0  # Ensures target is |1> at start
-    initial_state.state[0] = 0.0  # set |0> to 0 for initial state |1>
+    # The target state preparation (X gate) is now handled by the circuit itself.
     qpe_circuit.run(initial_state)
 
     estimated_phi = get_most_likely_phase(initial_state, t_qubits, target_val)
@@ -537,6 +538,147 @@ def test_qft_adder(A: int, B: int, n_bits: int, tolerance: float = 1e-6):
 
     print("="*70)
 
+# ==============================================================================
+#                      Quantum Noise Tests
+# ==============================================================================
+
+def test_quantum_noise():
+    """
+    Comprehensive test suite for Quantum Noise models.
+    """
+    print("\n" + "=" * 70)
+    print("   RUNNING COMPREHENSIVE QUANTUM NOISE TESTS")
+    print("=" * 70)
+
+    shots = 3000
+
+    # ----------------------------------------------------
+    #                Bit Flip Noise Test
+    # ----------------------------------------------------
+    print("\n--- [1] BIT FLIP NOISE (X Error) ---")
+    n_qubits = 1
+    error_rate = 0.2
+
+    qc = QuantumCircuit(n_qubits)
+    qc.add_gate(QuantumChannel.bit_flip(0, error_rate))
+
+    print(f"Applying Bit Flip Noise (p={error_rate}) to |0> state...")
+    counts = qc.simulate(QuantumState(n_qubits), shots=shots)
+
+    ones = counts.get('1', 0)
+    measured_rate = ones / shots
+    print(f"Counts: {counts}, Measured Error Rate: {measured_rate:.4f} (Expected ~{error_rate})")
+
+    std_err = math.sqrt(error_rate * (1 - error_rate) / shots)
+    is_correct = abs(measured_rate - error_rate) < (3 * std_err)
+    print(f"PASS: {is_correct}")
+
+
+    # ----------------------------------------------------
+    #               Phase Flip Noise Test
+    # ----------------------------------------------------
+    print("\n--- [2] PHASE FLIP NOISE (Z Error) ---")
+    error_rate = 0.15
+
+    qc = QuantumCircuit(n_qubits)
+    qc.add_gate(QuantumGate.h(0))
+    qc.add_gate(QuantumChannel.phase_flip(0, error_rate))
+    qc.add_gate(QuantumGate.h(0))
+
+    print(f"Applying Phase Flip Noise (p={error_rate}) to |+> state...")
+    counts = qc.simulate(QuantumState(n_qubits), shots=shots)
+
+    ones = counts.get('1', 0)
+    measured_rate = ones / shots
+    print(f"Counts: {counts}, Measured Error Rate: {measured_rate:.4f} (Expected ~{error_rate})")
+
+    std_err = math.sqrt(error_rate * (1 - error_rate) / shots)
+    is_correct = abs(measured_rate - error_rate) < (3 * std_err)
+    print(f"PASS: {is_correct}")
+
+    # ----------------------------------------------------
+    #            Depolarizing Noise Test
+    # ----------------------------------------------------
+    print("\n--- [3] DEPOLARIZING NOISE ---")
+    p = 0.3
+    expected_prob_1 = (p/3) + (p/3) # X and Y errors cause bit flip
+
+    qc = QuantumCircuit(n_qubits)
+    qc.add_gate(QuantumChannel.depolarizing(0, p))
+
+    print(f"Applying Depolarizing Noise (p={p}) to |0> state...")
+    counts = qc.simulate(QuantumState(n_qubits), shots=shots)
+
+    measured_prob_1 = counts.get('1', 0) / shots
+    print(f"Counts: {counts}, Measured Prob(|1>): {measured_prob_1:.4f} (Expected 2p/3 = {expected_prob_1:.4f})")
+
+    std_err = math.sqrt(expected_prob_1 * (1 - expected_prob_1) / shots)
+    is_correct = abs(measured_prob_1 - expected_prob_1) < (3 * std_err)
+    print(f"PASS: {is_correct}")
+
+    # ----------------------------------------------------
+    #               NoiseModel Helper Test
+    # ----------------------------------------------------
+    print("\n--- [4] AUTOMATIC NOISE INJECTION (Bell State) ---")
+    p = 0.1
+    clean_qc = QuantumCircuit(2)
+    clean_qc.add_gate(QuantumGate.h(0))
+    clean_qc.add_gate(QuantumGate.cx(0, 1))
+
+    noise_model = NoiseModel(default_error_rate=p)
+    noisy_qc = noise_model.apply(clean_qc)
+
+    print(f"Injected Depolarizing Noise (p={p}) via NoiseModel.")
+    print(f"Clean Gates: {len(clean_qc.gates)} -> Noisy Gates: {len(noisy_qc.gates)}")
+
+    counts = noisy_qc.simulate(QuantumState(2), shots=shots)
+    print(f"Counts: {counts}")
+
+    error_counts = counts.get('01', 0) + counts.get('10', 0)
+    if error_counts > 0:
+        print("PASS: Errors detected (Noise injection working).")
+    else:
+        print("FAIL: No errors detected.")
+    print("-" * 70)
+
+def test_noise_qft_iqft():
+    """
+    Visualizes noise using a QFT Round-Trip (Identity) circuit.
+    Circuit: |000> -> QFT -> Inverse QFT -> |000>
+    """
+    print("\n" + "=" * 70)
+    print("RUNNING TEST: NOISE VISUALIZATION (QFT Round-Trip)")
+
+    n_qubits = 3
+    shots = 2000
+    p = 0.02
+
+    clean_qc = QuantumCircuit(n_qubits)
+    clean_qc.add_gate(QuantumCircuit.qft(n_qubits, inverse=False))
+    clean_qc.add_gate(QuantumCircuit.qft(n_qubits, inverse=True))
+
+    print(f"Circuit: QFT(3) + Inverse QFT(3). Total Gates: {len(clean_qc.gates)}")
+
+    # Inject Noise
+    noise_model = NoiseModel(default_error_rate=p)
+    noisy_qc = noise_model.apply(clean_qc)
+
+    print(f"Simulating {shots} shots with Depolarizing Noise (p={p})...")
+
+    # Run Simulation
+    state = QuantumState(n_qubits)
+    counts = noisy_qc.simulate(state, shots=shots)
+
+    # Calculate Signal-to-Noise
+    success_count = counts.get('000', 0)
+    success_rate = success_count / shots
+    print(f"Success Rate (|000>): {success_rate:.2%} (Ideal 100%)")
+    print(f"Measurement Counts: {counts}")
+
+    # Plot Histogram
+    plot_histogram(counts, shots)
+
+    print("-" * 70)
 
 # ==============================================================================
 #                              Main Test Suite
@@ -591,3 +733,6 @@ if __name__ == "__main__":
     test_qpe_t_gate()
     test_qpe_approx_pi_3()
     test_grover_search(4, 13)
+    test_qft_adder(A=1, B=2, n_bits=3) # 1 + 2 = 3
+    test_qft_adder(A=5, B=6, n_bits=4) # 5 + 6 = 11
+    test_qft_adder(A=10, B=7, n_bits=4) # 10 + 7 = 17 (1 mod 16)
