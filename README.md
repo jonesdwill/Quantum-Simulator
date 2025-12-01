@@ -142,7 +142,7 @@ If you want to modify the source code, or use the test and benchmark utils:
 
 ``` bash
 git clone https://github.com/jonesdwill/statevectorsim.git
-cd Quantum-Simulator
+cd statevectorsim
 ```
 
 2. Set up a virtual environment (recommended): If you don't have it already, install **`venv`**:
