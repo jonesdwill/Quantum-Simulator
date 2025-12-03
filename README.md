@@ -62,7 +62,9 @@ More benchmarks can be found in ```\benchmark```.
 
 ![Random_Circuit_benchmark.png](benchmark/Random_Circuit_benchmark.png)
 ---
-
+## Future 
+I would like to implement the following modalities: superconducting, ion-trap, photonic, and neutral atom.
+---
 ## Usage
 
 1. Basic Circuit & Measurement
