@@ -61,10 +61,6 @@ Below is the benchmark for 100 50-gate random n-qubit circuits.
 More benchmarks can be found in ```\benchmark```. 
 
 ![Random_Circuit_benchmark.png](benchmark/Random_Circuit_benchmark.png)
----
-## Future 
-
-I would like to implement the following modalities: superconducting, ion-trap, photonic, and neutral atom.
 
 ---
 ## Usage
@@ -210,6 +206,14 @@ The `QuantumCircuit` class includes static methods to quickly generate common n-
 | **QPE** | `QuantumCircuit.qpe(t_qubits: int, unitary_matrix, m_qubits: int)` | $t+m$ | Quantum Phase Estimation to estimate the phase of a unitary operator $U$.                                        |
 | **Shor's Algo** | `QuantumCircuit.shors(N: int, a: int)` | $\approx 3 \log N$ | Quantum subroutine for Shor's Algorithm (factoring $N$).                                                         |
 
+---
+
+## Future 
+
+I would like to implement the following modalities: superconducting, ion-trap, photonic, and neutral atom.
+
+--- 
+
 ## References
 
 - Nielsen, M. A. & Chuang, I. L. *Quantum Computation and Quantum Information*. 10th Anniversary Edition, Cambridge University Press (2011).  
@@ -221,7 +225,8 @@ The `QuantumCircuit` class includes static methods to quickly generate common n-
 - Quantum Country — A mnemonic medium for learning quantum computing and related concepts. [https://quantum.country](https://quantum.country)
 - Mastriani, M. Quantum Fourier transform is the building block for creating entanglement. PMC Article (2021). Link: https://pmc.ncbi.nlm.nih.gov/articles/PMC8593191/
 - PennyLane Team. Intro to Quantum Fourier Transform. Tutorial (2024). Link: https://pennylane.ai/qml/demos/tutorial_qft
-  
+
+---
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for full details.
