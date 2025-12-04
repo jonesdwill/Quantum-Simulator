@@ -5,8 +5,9 @@
 
 A lightweight, high-level, quantum state-vector simulator, written in Python. 
 
-This package includes a backend that switches between dense (NumPy) and sparse (SciPy CSR) matrix representations, optimised circuit compilation, noise modelling via Monte Carlo methods, and built-in implementations of 
-major quantum algorithms. Generally, it can efficiently handle up to 26-qubit circuits, though this is dependent on the memory you have available and circuit sparsity. After this memory scaling becomes too large.
+This package includes a backend that switches between dense (NumPy) and sparse (SciPy CSR) matrix representations, optimised circuit compilation, noise modelling via Monte Carlo methods, and built-in implementations of major quantum algorithms. 
+
+Although not novel, this project aims to understand the practical limitations of simulating quantum systems. Generally, it can efficiently handle up to 26-qubit circuits, though this is dependent on the memory you have available and circuit sparsity. After this memory scaling becomes too large.
 
 ---
 
